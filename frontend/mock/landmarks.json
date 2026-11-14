@@ -1,0 +1,12 @@
+[
+  { "name": "Olympus Mons", "lon": -133.8, "lat": 18.65 },
+  { "name": "Valles Marineris", "lon": -59.2, "lat": -13.9 },
+  { "name": "Hellas Planitia", "lon": 70.0, "lat": -42.4 },
+  { "name": "Gale Crater", "lon": 137.4, "lat": -5.4 },
+  { "name": "Jezero Crater", "lon": 77.45, "lat": 18.44 },
+  { "name": "Elysium Mons", "lon": 146.9, "lat": 24.8 },
+  { "name": "Arsia Mons", "lon": -120.5, "lat": -8.3 },
+  { "name": "Utopia Planitia", "lon": 117.5, "lat": 46.7 },
+  { "name": "Argyre Planitia", "lon": -43.0, "lat": -49.7 },
+  { "name": "Gusev Crater", "lon": 175.4, "lat": -14.5 }
+]

@@ -1,0 +1,57 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": { "type": "Point", "coordinates": [77.4509, 18.4446, -2569.0] },
+      "properties": {
+        "sol": 1,
+        "images": [
+          {
+            "thumb_url": "https://placehold.co/160x120?text=Sol+1+NAVCAM",
+            "full_url": "https://placehold.co/1280x960?text=Sol+1+NAVCAM",
+            "camera": "NAVCAM_LEFT"
+          },
+          {
+            "thumb_url": "https://placehold.co/160x120?text=Sol+1+HAZCAM",
+            "full_url": "https://placehold.co/1280x960?text=Sol+1+HAZCAM",
+            "camera": "FRONT_HAZCAM_LEFT_A"
+          }
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": { "type": "Point", "coordinates": [77.4290, 18.4555, -2556.0] },
+      "properties": {
+        "sol": 54,
+        "images": [
+          {
+            "thumb_url": "https://placehold.co/160x120?text=Sol+54+MCZ",
+            "full_url": "https://placehold.co/1280x960?text=Sol+54+MCZ",
+            "camera": "MCZ_RIGHT"
+          }
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": { "type": "Point", "coordinates": [77.4020, 18.4735, -2523.0] },
+      "properties": {
+        "sol": 120,
+        "images": [
+          {
+            "thumb_url": "https://placehold.co/160x120?text=Sol+120+NAVCAM",
+            "full_url": "https://placehold.co/1280x960?text=Sol+120+NAVCAM",
+            "camera": "NAVCAM_RIGHT"
+          },
+          {
+            "thumb_url": "https://placehold.co/160x120?text=Sol+120+MCZ",
+            "full_url": "https://placehold.co/1280x960?text=Sol+120+MCZ",
+            "camera": "MCZ_LEFT"
+          }
+        ]
+      }
+    }
+  ]
+}
