@@ -8,9 +8,64 @@
   <body>
     <div id="globe"></div>
 
+    <div id="search" class="panel">
+      <input
+        id="search-input"
+        type="search"
+        placeholder="Search Mars"
+        autocomplete="off"
+        spellcheck="false"
+        aria-label="Search Mars landmarks"
+        aria-controls="search-results"
+      />
+      <ul id="search-results" role="listbox" hidden></ul>
+    </div>
+
     <div id="sites" class="panel" aria-label="Sites">
       <h2>Fly to site</h2>
     </div>
+
+    <div id="layers" class="panel" aria-label="Layers">
+      <h2>Layers</h2>
+      <div id="layer-list"></div>
+      <ul id="danger-legend" hidden>
+        <li><span class="swatch" style="background: #2ecc40"></span>Under 10° slope</li>
+        <li><span class="swatch" style="background: #ffd200"></span>10–20°</li>
+        <li><span class="swatch" style="background: #e61e1e"></span>Over 20°</li>
+      </ul>
+    </div>
+
+    <div id="toolbar" class="panel">
+      <button id="map-view" title="Top-down, north-up view of the current location">Map view</button>
+      <button id="directions" aria-pressed="false" title="Plan a walking route between two points">Directions</button>
+    </div>
+
+    <div id="route-card" class="panel" aria-label="Route" hidden>
+      <header>
+        <h2>Walking route</h2>
+        <button data-role="close" aria-label="Close route">×</button>
+      </header>
+      <dl>
+        <div><dt>Distance</dt><dd data-role="distance"></dd></div>
+        <div><dt>Walk time</dt><dd data-role="time"></dd></div>
+        <div><dt>Ascent</dt><dd data-role="ascent"></dd></div>
+        <div>
+          <dt>Max slope</dt>
+          <dd><span data-role="slope"></span> <span class="slope-tag"><span class="swatch" data-role="slope-dot"></span><span data-role="slope-class"></span></span></dd>
+        </div>
+      </dl>
+      <h3>Elevation profile</h3>
+      <div class="profile" data-role="chart"></div>
+      <p class="readout" data-role="readout"></p>
+    </div>
+
+    <div id="ground-hud" class="panel" aria-label="Ground view" hidden>
+      <canvas id="minimap" width="180" height="180" aria-label="Minimap: your position and heading"></canvas>
+      <p>WASD / arrows: walk · Shift: run<br />Drag: look around · Esc: exit</p>
+      <button id="exit-ground">Exit to orbit</button>
+    </div>
+
+    <div id="coords" class="panel" aria-label="Cursor coordinates"></div>
 
     <div id="status" class="panel" role="status" hidden></div>
 

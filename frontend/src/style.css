@@ -72,3 +72,305 @@ body {
 #status.error {
   color: var(--error);
 }
+
+/* Buttons shared by panels */
+.panel button {
+  background: transparent;
+  color: var(--panel-fg);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.panel button:hover {
+  border-color: var(--accent);
+  color: #fff;
+}
+
+/* Search */
+#search {
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(420px, calc(100% - 32px));
+  box-sizing: border-box;
+  padding: 6px;
+  z-index: 2;
+}
+
+#search-input {
+  width: 100%;
+  box-sizing: border-box;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--panel-fg);
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 8px 10px;
+  font: inherit;
+  outline: none;
+}
+
+#search-input:focus {
+  border-color: var(--accent);
+}
+
+#search-input::placeholder {
+  color: rgba(243, 233, 226, 0.5);
+}
+
+#search-results {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+}
+
+#search-results li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+#search-results li.active,
+#search-results li:hover {
+  background: rgba(217, 105, 58, 0.35);
+}
+
+#search-results li.empty {
+  cursor: default;
+  opacity: 0.6;
+  background: none;
+}
+
+#search-results .coords {
+  opacity: 0.6;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Layers */
+#layers {
+  top: 16px;
+  right: 16px;
+  min-width: 150px;
+}
+
+#layer-list label {
+  display: block;
+  cursor: pointer;
+  padding: 2px 0;
+}
+
+#danger-legend {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 8px 0 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.15);
+  font-size: 12px;
+}
+
+#danger-legend li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 1px 0;
+}
+
+.swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+  display: inline-block;
+}
+
+/* Bottom toolbar */
+#toolbar {
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 6px;
+}
+
+/* Keep Cesium's credits readable but out of the way of the status panel */
+#status {
+  bottom: 64px;
+}
+
+@media (max-width: 720px) {
+  #sites {
+    top: 72px;
+  }
+  #layers {
+    top: 72px;
+  }
+}
+
+/* Cursor coordinates */
+#coords {
+  bottom: 16px;
+  right: 16px;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: pre;
+  pointer-events: none;
+}
+
+/* Ground mode HUD: minimap + exit */
+#ground-hud {
+  bottom: 56px;
+  right: 16px;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 180px;
+}
+
+#ground-hud[hidden] {
+  display: none;
+}
+
+#minimap {
+  width: 180px;
+  height: 180px;
+  border-radius: 4px;
+  display: block;
+}
+
+#ground-hud p {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.4;
+  opacity: 0.75;
+}
+
+/* Toolbar */
+#toolbar {
+  display: flex;
+  gap: 6px;
+}
+
+.panel button.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+/* Route card */
+#route-card {
+  top: 120px;
+  left: 16px;
+  width: 288px;
+}
+
+#route-card header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+#route-card header h2 {
+  margin: 0;
+}
+
+#route-card header button {
+  padding: 0 8px;
+  font-size: 18px;
+  line-height: 24px;
+}
+
+#route-card dl {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 12px;
+  margin: 0 0 10px;
+}
+
+#route-card dt {
+  font-size: 11px;
+  opacity: 0.65;
+}
+
+#route-card dd {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.slope-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 400;
+  opacity: 0.85;
+  vertical-align: middle;
+}
+
+.slope-tag .swatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+#route-card h3 {
+  margin: 0 0 4px;
+  font-size: 11px;
+  font-weight: 400;
+  opacity: 0.65;
+}
+
+.profile svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.profile .line {
+  fill: none;
+  stroke: #4fc3f7;
+  stroke-width: 2;
+  stroke-linejoin: round;
+}
+
+.profile .area {
+  fill: #4fc3f7;
+  fill-opacity: 0.15;
+}
+
+.profile .grid {
+  stroke: rgba(255, 255, 255, 0.12);
+  stroke-width: 1;
+}
+
+.profile .axis {
+  fill: rgba(243, 233, 226, 0.6);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+}
+
+.profile .crosshair {
+  stroke: rgba(255, 255, 255, 0.5);
+  stroke-width: 1;
+}
+
+.profile .dot {
+  fill: #4fc3f7;
+  stroke: #181210; /* panel surface: separates the marker from the line */
+  stroke-width: 2;
+}
+
+#route-card .readout {
+  margin: 4px 0 0;
+  font-size: 11px;
+  opacity: 0.75;
+  font-variant-numeric: tabular-nums;
+  min-height: 1.3em;
+}
