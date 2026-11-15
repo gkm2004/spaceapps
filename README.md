@@ -3,7 +3,8 @@
 **A street-level map for the first people to walk on Mars.**
 
 Built for the [2026 NASA Space Apps Challenge](https://www.spaceappschallenge.org/): *Interplanetary Survival Guide: Martian Map*.
-
+* **Demo Video:** [Watch on YouTube](https://youtu.be/ipJbgoSEmvg)
+* **Project Live:** [Try the App](https://zealous-bush-023ba5810.3.azurestaticapps.net)
 <!-- TODO: add a hero screenshot or GIF here, e.g. ![Mars Map](docs/hero.png) -->
 <!-- TODO: Live demo: https://... · Demo video: https://... · Team: ... -->
 
