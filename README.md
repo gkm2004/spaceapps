@@ -1,11 +1,19 @@
-# Mars Map
+<p align="center">
+  <img src="docs/logo.png" alt="Epochtronauts mission patch" width="260">
+</p>
 
-**A street-level map for the first people to walk on Mars.**
+<h1 align="center">Mars Map</h1>
 
-Built for the [2026 NASA Space Apps Challenge](https://www.spaceappschallenge.org/): *Interplanetary Survival Guide: Martian Map*.
+<p align="center"><strong>A street-level map for the first people to walk on Mars.</strong></p>
 
-<!-- TODO: add a hero screenshot or GIF here, e.g. ![Mars Map](docs/hero.png) -->
-<!-- TODO: Live demo: https://... · Demo video: https://... · Team: ... -->
+<p align="center">
+  By <strong>Epochtronauts</strong> for the <a href="https://www.spaceappschallenge.org/">2026 NASA Space Apps Challenge</a>:
+  <em>Interplanetary Survival Guide: Martian Map</em>
+</p>
+
+<!-- TODO: Live demo: https://... · Demo video: https://... -->
+
+![Planning a 3.15 km walk across Jezero Crater, with Perseverance's stops shown as orange markers](docs/route-planning.png)
 
 ---
 
@@ -32,6 +40,10 @@ laid out by the direction they face.
 ---
 
 ## What it does
+
+![Ground view: the same route seen from eye height on the 2 m terrain, with the minimap and heading in the corner](docs/ground-view.png)
+
+*Ground view at Jezero. The blue line is the planned walking route (3.15 km, 1 h 15 min, 84 m of ascent, max slope 8.4°). The orange markers are Perseverance's real stops; the minimap shows the slope-hazard map with the astronaut's position and heading.*
 
 | Feature | What the astronaut gets |
 |---|---|
@@ -349,7 +361,11 @@ Full contract in [CONTRACT.md](CONTRACT.md). Coordinates are planetocentric degr
 
 ## Team
 
-<!-- TODO: names, roles and links -->
+<p align="center">
+  <img src="docs/logo.png" alt="Epochtronauts" width="160">
+</p>
+
+**Epochtronauts** <!-- TODO: names, roles and links -->
 
 Built in two parallel tracks against a shared API contract: **Track A** (frontend, `frontend/`)
 and **Track B** (backend and data, `backend/`, `data/`). Changes to [CONTRACT.md](CONTRACT.md)
