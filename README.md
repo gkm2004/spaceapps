@@ -51,7 +51,14 @@ laid out by the direction they face.
 | Jezero Crater | Perseverance (sols 13–716) | 6 × 6 km | 3000 × 3000 at 2 m | 259 | 1,485 | 5,906 |
 | Gale Crater | Curiosity (sols 3–641) | 6 × 6 km | 3000 × 3000 at 2 m | 183 | 1,045 | 3,042 |
 
-Adding a site takes one DEM and one command per pipeline step ([see below](#data-pipeline)).
+**Why only two sites?** Jezero and Gale are a starting point, not a limit. Each site
+means cropping a multi-gigabyte source DEM, computing slope and cost grids, cutting
+hazard tiles and building a 3D mesh, and the routing grids stay in server memory.
+Within a hackathon's time and compute budget we picked the two places with the most
+rover ground truth. Nothing in the pipeline is specific to them: any location with a
+high-resolution DEM, such as a candidate human landing site, can be added with the same
+scripts, one DEM and one command per step
+([see below](#2-build-the-data-for-real-routes-and-terrain)).
 
 ---
 
