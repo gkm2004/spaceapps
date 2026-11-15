@@ -8,6 +8,8 @@ import { initPov } from './pov.js';
 
 // Cesium's terrain sits about 74 m below contract (DEM) heights at Jezero; see data/scripts/README.md.
 const CESIUM_HEIGHT_OFFSET_M = -74;
+// Not in the API contract: which rover's stops a site holds.
+const ROVER_BY_SITE = { jezero: 'Perseverance', gale: 'Curiosity' };
 const MARKER = Cesium.Color.WHITE;
 const MARKER_OUTLINE = Cesium.Color.fromCssColorString('#d9693a');
 const SELECTED = Cesium.Color.fromCssColorString('#ffd24a');
@@ -62,7 +64,7 @@ export function initWaypoints(viewer, sites, ui) {
   // --- photo panel -------------------------------------------------------------
   function showPanel(stop) {
     select(stop);
-    el('title').textContent = `Perseverance · Sol ${stop.sol}`;
+    el('title').textContent = `${stop.rover} · Sol ${stop.sol}`;
     el('where').textContent = `Lon ${stop.lon.toFixed(4)}°  Lat ${stop.lat.toFixed(4)}°`;
     const street = el('street');
     street.disabled = stop.pov.length === 0;
@@ -90,7 +92,8 @@ export function initWaypoints(viewer, sites, ui) {
   el('close').addEventListener('click', closePanel);
   /** @param opts { heading?: degrees, onClose?(stop, heading) } */
   function openStreetView(stop, opts = {}) {
-    const withPov = stops.filter((s) => s.pov.length > 0);
+    // street view walks along one rover's path: only stops from the same site
+    const withPov = stops.filter((s) => s.site === stop.site && s.pov.length > 0);
     const i = withPov.indexOf(stop);
     if (i < 0) return;
     afterStreetView = opts.onClose ?? null;
@@ -159,13 +162,22 @@ export function initWaypoints(viewer, sites, ui) {
     if (stop) showPanel(stop);
   }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
 
-  Promise.all(sites.map((site) => getWaypoints(site.id)))
-    .then((collections) => {
-      for (const collection of collections) {
+  Promise.all(sites.map((site) => getWaypoints(site.id).then((collection) => ({ site, collection }))))
+    .then((results) => {
+      for (const { site, collection } of results) {
         for (const feature of collection.features) {
           const [lon, lat, height = 0] = feature.geometry.coordinates;
           const p = feature.properties;
-          const stop = { sol: p.sol, lon, lat, height, images: p.images ?? [], pov: p.pov ?? [] };
+          const stop = {
+            site: site.id,
+            rover: ROVER_BY_SITE[site.id] ?? 'Rover',
+            sol: p.sol,
+            lon,
+            lat,
+            height,
+            images: p.images ?? [],
+            pov: p.pov ?? [],
+          };
           stop.entity = viewer.entities.add({
             position: Cesium.Cartesian3.fromDegrees(lon, lat),
             point: {

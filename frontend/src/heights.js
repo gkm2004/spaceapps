@@ -9,35 +9,33 @@
 // With 125 rover markers on a 2 m mesh, those two were ~90% of frame time.
 import * as Cesium from 'cesium';
 
-const maps = []; // { west, south, east, north, rows, cols, data: Uint16Array, min, scale, offset }
-let visible = false; // is the local terrain what's on screen right now?
+// One per site: { west, south, east, north, rows, cols, data: Uint16Array, min, scale, offset, visible }
+const maps = [];
 
 /**
  * @param meta tileset.extras.heightmap: { rows, cols, bounds: [w, s, e, n], min, scale }
  *   Row 0 is the north edge. height = min + value * scale (DEM metres).
  * @param data Uint16Array, row-major
  * @param offset metres to add to DEM heights to get heights in the Cesium scene
+ * @returns the map; terrain.js sets its `visible` while that site's terrain is on screen
  */
 export function addHeightmap(meta, data, offset) {
   const [west, south, east, north] = meta.bounds;
-  maps.push({ west, south, east, north, rows: meta.rows, cols: meta.cols, data, min: meta.min, scale: meta.scale, offset });
-}
-
-/** terrain.js reports whether the local terrain is currently shown. */
-export function setLocalTerrainVisible(on) {
-  visible = on;
+  const map = { west, south, east, north, rows: meta.rows, cols: meta.cols, data, min: meta.min, scale: meta.scale, offset, visible: false };
+  maps.push(map);
+  return map;
 }
 
 /**
  * Height of our terrain surface in the Cesium scene at a lon/lat (degrees),
  * or undefined outside every heightmap.
- * By default only answers while the local terrain is on screen, because
+ * By default only answers while that site's local terrain is on screen, because
  * otherwise the visible ground is Cesium's (a few metres different).
  * Pass { evenIfHidden: true } for things that just need a good height.
  */
 export function surfaceHeightAt(lon, lat, { evenIfHidden = false } = {}) {
-  if (!visible && !evenIfHidden) return undefined;
   for (const m of maps) {
+    if (!m.visible && !evenIfHidden) continue;
     const x = ((lon - m.west) / (m.east - m.west)) * (m.cols - 1);
     const y = ((m.north - lat) / (m.north - m.south)) * (m.rows - 1);
     if (!(x >= 0 && y >= 0 && x <= m.cols - 1 && y <= m.rows - 1)) continue;

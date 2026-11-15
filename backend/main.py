@@ -8,6 +8,7 @@ falls back to the mock files in frontend/mock/ so the frontend still runs.
 import json
 import logging
 import mimetypes
+import os
 import re
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -20,10 +21,11 @@ from fastapi.staticfiles import StaticFiles
 from routing import RouteError, Site
 
 REPO = Path(__file__).resolve().parent.parent
-PROCESSED = REPO / "data" / "processed"
-TILES = REPO / "data" / "tiles"
-TERRAIN = REPO / "data" / "terrain"  # {site}/tileset.json, written by data/scripts/terrain_mesh.py
-WAYPOINTS = REPO / "data" / "waypoints"  # {site}.json, written by data/scripts/waypoints.py
+DATA = Path(os.environ.get("DATA_DIR") or REPO / "data")  # mounted volume in deployments
+PROCESSED = DATA / "processed"
+TILES = DATA / "tiles"
+TERRAIN = DATA / "terrain"  # {site}/tileset.json, written by data/scripts/terrain_mesh.py
+WAYPOINTS = DATA / "waypoints"  # {site}.json, written by data/scripts/waypoints.py
 MOCK = REPO / "frontend" / "mock"
 
 SITE_NAMES = {"jezero": "Jezero Crater", "gale": "Gale Crater"}
@@ -51,7 +53,9 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Mars Map API", lifespan=lifespan)
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+# ALLOWED_ORIGINS: comma-separated frontend origins; default "*" for local dev.
+origins = [o.strip() for o in os.environ.get("ALLOWED_ORIGINS", "*").split(",") if o.strip()]
+app.add_middleware(CORSMiddleware, allow_origins=origins, allow_methods=["*"], allow_headers=["*"])
 # JSON and terrain tiles compress well (waypoints: 790 KB -> ~10x smaller); images pass through.
 app.add_middleware(GZipMiddleware, minimum_size=2000, compresslevel=5)
 
@@ -70,6 +74,14 @@ def get_site(site_id: str) -> Site:
     if site_id not in sites:
         raise HTTPException(404, f"Unknown site {site_id!r}. Available: {sorted(sites)}")
     return sites[site_id]
+
+
+@app.get("/health")
+def health():
+    # 503 when no real grids loaded, so a deploy missing its data volume is caught
+    if not sites:
+        raise HTTPException(503, f"No grids found in {PROCESSED}")
+    return {"status": "ok", "sites": sorted(sites)}
 
 
 @app.get("/api/sites")
@@ -107,10 +119,12 @@ def get_waypoints(site: str = Query(..., description="Site id from /api/sites"))
 
 
 # GET /tiles/{site}/danger/{z}/{x}/{y}.png (written by data/scripts/danger_tiles.py)
-TILES.mkdir(parents=True, exist_ok=True)
+if not TILES.is_dir():  # the volume may be mounted read-only
+    TILES.mkdir(parents=True, exist_ok=True)
 app.mount("/tiles", StaticFiles(directory=TILES), name="tiles")
 
 # GET /terrain/{site}/tileset.json + tiles: high-resolution 3D terrain for ground mode.
 # Optional: the frontend falls back to Cesium's global terrain when it is missing.
-TERRAIN.mkdir(parents=True, exist_ok=True)
+if not TERRAIN.is_dir():
+    TERRAIN.mkdir(parents=True, exist_ok=True)
 app.mount("/terrain", StaticFiles(directory=TERRAIN), name="terrain")

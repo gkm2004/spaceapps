@@ -1,12 +1,12 @@
 // High-resolution local terrain.
 // Cesium's Mars tileset has a terrain point every ~73 m at Jezero. For sites
 // where data/scripts/terrain_mesh.py has been run, the backend serves a 2 m
-// terrain model built from the HiRISE DEM. Near the site we cut the zone out
-// of Cesium's ground and show ours instead.
+// terrain model built from the HiRISE DEM. Near a site we cut its zone out
+// of Cesium's ground and show ours instead. Each site switches on its own.
 import * as Cesium from 'cesium';
 import { API_BASE } from './config.js';
 import { heavyTilesets, sampleTerrain } from './ground.js';
-import { addHeightmap, setLocalTerrainVisible } from './heights.js';
+import { addHeightmap } from './heights.js';
 import { addLayerCheckbox } from './layers.js';
 
 const MIN_ACTIVE_WITHIN_M = 6000; // camera closer than this to the site centre -> local terrain
@@ -35,20 +35,20 @@ async function measureOffset(scene, controlPoints) {
  * @param viewer Cesium viewer
  * @param mars the global Mars Cesium3DTileset
  * @param sites entries from /api/sites
- * @param onChange called after the visible ground changes (things clamped to it should re-clamp)
+ * @param hooks {
+ *   onChange()   the visible ground changed (things laid on it should re-lay)
+ *   onHeights()  a site's heightmap arrived (exact heights are now available there)
+ * }
  * @returns { tilesets: Cesium3DTileset[], offsetFor(siteId) }  local tilesets (may be empty)
  */
-export async function initLocalTerrain(viewer, mars, sites, onChange) {
+export async function initLocalTerrain(viewer, mars, sites, hooks = {}) {
   const { scene, camera } = viewer;
-  const locals = []; // [{ tileset, center: Cartesian3, radius: metres }]
-  const offsets = new Map(); // site id -> metres added to DEM heights
-  const holes = [];
 
-  for (const site of sites) {
-    const url = `${API_BASE}/terrain/${site.id}/tileset.json`;
+  /** One site's terrain, or null if the backend has none for it. */
+  async function loadSite(site) {
     let tileset;
     try {
-      tileset = await Cesium.Cesium3DTileset.fromUrl(url, {
+      tileset = await Cesium.Cesium3DTileset.fromUrl(`${API_BASE}/terrain/${site.id}/tileset.json`, {
         // No camera collision here. With it on, Cesium ray-casts this tileset on the CPU every
         // frame to find the ground under the camera: ~100 ms per frame on a 2 m mesh. Ground
         // mode places the camera from the heightmap, and orbit view collides with Cesium's own
@@ -59,7 +59,7 @@ export async function initLocalTerrain(viewer, mars, sites, onChange) {
         maximumCacheOverflowBytes: 128 * 1024 * 1024,
       });
     } catch {
-      continue; // no local terrain for this site (or backend down): keep Cesium's ground
+      return null; // no local terrain for this site (or backend down): keep Cesium's ground
     }
     const extras = tileset.extras ?? {};
     const [west, south, east, north] = extras.bounds ?? site.bbox;
@@ -71,69 +71,91 @@ export async function initLocalTerrain(viewer, mars, sites, onChange) {
     const up = Cesium.Ellipsoid.MARS.geodeticSurfaceNormal(center, new Cesium.Cartesian3());
     tileset.modelMatrix = Cesium.Matrix4.fromTranslation(
       Cesium.Cartesian3.multiplyByScalar(up, offset, new Cesium.Cartesian3()));
-    offsets.set(site.id, offset);
-
-    // The same DEM as a plain grid, so heights can be looked up without touching the renderer.
-    if (extras.heightmap) {
-      try {
-        const res = await fetch(`${API_BASE}/terrain/${site.id}/${extras.heightmap.uri}`);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        addHeightmap(extras.heightmap, new Uint16Array(await res.arrayBuffer()), offset);
-      } catch (err) {
-        console.warn('No heightmap for', site.id, '(falling back to sampling the scene)', err);
-      }
-    }
     tileset.show = false;
-    scene.primitives.add(tileset);
-    heavyTilesets.push(tileset);
     console.info(`Local terrain for ${site.id}: shifted ${offset.toFixed(1)} m to meet Cesium's ground`);
 
     // The hole in Cesium's ground is slightly smaller than our model, so the two overlap at the edge.
     const dLat = Cesium.Math.toDegrees(OVERLAP_M / Cesium.Ellipsoid.MARS.maximumRadius);
     const dLon = dLat / Math.cos(Cesium.Math.toRadians((south + north) / 2));
-    holes.push(new Cesium.ClippingPolygon({
+    const hole = new Cesium.ClippingPolygon({
       positions: Cesium.Cartesian3.fromDegreesArray([
         west + dLon, south + dLat,
         east - dLon, south + dLat,
         east - dLon, north - dLat,
         west + dLon, north - dLat,
       ]),
-    }));
+    });
     const widthM = Cesium.Math.toRadians(north - south) * Cesium.Ellipsoid.MARS.maximumRadius;
-    locals.push({
+    const local = {
+      id: site.id,
       tileset,
+      offset,
+      hole,
       center: Cesium.Cartesian3.fromDegrees((west + east) / 2, (south + north) / 2, extras.min_height ?? 0),
       radius: Math.max(MIN_ACTIVE_WITHIN_M, ACTIVE_SPANS * widthM),
-    });
+      active: false,
+      heights: null, // set when the heightmap arrives
+    };
+
+    // The same DEM as a plain grid, so heights can be looked up without touching the renderer.
+    // Several MB: fetched in the background so the interface doesn't wait for it.
+    if (extras.heightmap) {
+      fetch(`${API_BASE}/terrain/${site.id}/${extras.heightmap.uri}`)
+        .then((res) => {
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          return res.arrayBuffer();
+        })
+        .then((buffer) => {
+          local.heights = addHeightmap(extras.heightmap, new Uint16Array(buffer), offset);
+          local.heights.visible = local.active;
+          hooks.onHeights?.();
+        })
+        .catch((err) => console.warn('No heightmap for', site.id, '(falling back to sampling the scene)', err));
+    }
+    return local;
   }
 
+  // Sites are independent: load them side by side.
+  const locals = (await Promise.all(sites.map(loadSite))).filter(Boolean);
   if (locals.length === 0) return { tilesets: [], offsetFor: () => null };
 
-  const clipping = new Cesium.ClippingPolygonCollection({ polygons: holes, enabled: false });
+  for (const l of locals) {
+    scene.primitives.add(l.tileset);
+    heavyTilesets.push(l.tileset);
+  }
+  const clipping = new Cesium.ClippingPolygonCollection({ polygons: locals.map((l) => l.hole), enabled: false });
   mars.clippingPolygons = clipping;
 
   let wanted = true; // the layer checkbox
-  let active = false;
-  function update() {
-    const near = locals.some((l) => Cesium.Cartesian3.distance(camera.positionWC, l.center) < l.radius);
-    const next = wanted && near;
-    if (next === active) return;
-    active = next;
-    for (const l of locals) l.tileset.show = active;
-    setLocalTerrainVisible(active);
-    syncHole();
-    scene.requestRender();
-    onChange?.(active);
-  }
-  /** Only cut the hole in Cesium's ground once our terrain has something to draw there. */
-  function syncHole() {
-    const ready = active && locals.every((l) => l.tileset.root.contentReady);
+
+  /**
+   * Only cut the holes in Cesium's ground once a site that is showing has something to
+   * draw. (All holes switch together; the other sites are thousands of km out of view.)
+   */
+  function syncHoles() {
+    const ready = locals.some((l) => l.active && l.tileset.root.contentReady);
     if (clipping.enabled !== ready) {
       clipping.enabled = ready;
       scene.requestRender();
     }
   }
-  for (const l of locals) l.tileset.tileLoad.addEventListener(syncHole);
+
+  function update() {
+    let changed = false;
+    for (const l of locals) {
+      const next = wanted && Cesium.Cartesian3.distance(camera.positionWC, l.center) < l.radius;
+      if (next === l.active) continue;
+      l.active = next;
+      l.tileset.show = next;
+      if (l.heights) l.heights.visible = next;
+      changed = true;
+    }
+    if (!changed) return;
+    syncHoles();
+    scene.requestRender();
+    hooks.onChange?.();
+  }
+  for (const l of locals) l.tileset.tileLoad.addEventListener(syncHoles);
   camera.changed.addEventListener(update);
   camera.moveEnd.addEventListener(update);
   update();
@@ -154,6 +176,6 @@ export async function initLocalTerrain(viewer, mars, sites, onChange) {
      * While a site's local terrain is showing, its surface is the DEM plus this
      * many metres: contract heights + offset are exact Cesium heights. Else null.
      */
-    offsetFor: (siteId) => (active && offsets.has(siteId) ? offsets.get(siteId) : null),
+    offsetFor: (siteId) => locals.find((l) => l.id === siteId && l.active)?.offset ?? null,
   };
 }

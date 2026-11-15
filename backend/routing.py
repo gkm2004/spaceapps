@@ -148,9 +148,13 @@ class Site:
             round((self.bbox[0] + self.bbox[2]) / 2, 6), round((self.bbox[1] + self.bbox[3]) / 2, 6)]
 
         # For snapping: index of the nearest passable cell, for every cell.
-        self._snap_dist, self._snap_idx = distance_transform_edt(
+        dist, idx = distance_transform_edt(
             ~np.isfinite(self.cost), sampling=(self.cell_size[1], self.cell_size[0]),
             return_indices=True)
+        # compact types: with two 6 km sites loaded, the defaults (float64 + int32) cost ~290 MB
+        self._snap_dist = dist.astype(np.float32)
+        self._snap_idx = idx.astype(np.int16 if max(self.cost.shape) < 32768 else np.int32)
+        del dist, idx
         self.route_cells = lru_cache(maxsize=512)(self._route_cells)
 
     # -- coordinates ---------------------------------------------------------
