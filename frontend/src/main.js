@@ -2,13 +2,15 @@ import 'cesium/Build/Cesium/Widgets/widgets.css';
 import './style.css';
 import { CESIUM_ION_TOKEN, USE_MOCK, API_BASE } from './config.js';
 import { getLandmarks, getSites } from './api.js';
-import { flyToMapView, initCoordinateReadout } from './camera.js';
+import { flyToMapView, initCoordinateReadout, screenCenterPosition } from './camera.js';
 import { initDirections } from './directions.js';
 import * as Cesium from 'cesium';
 import { createGlobe, flyToSite } from './globe.js';
 import { initGroundMode } from './ground.js';
 import { initLayers } from './layers.js';
 import { initSearch } from './search.js';
+import { initLocalTerrain } from './terrain.js';
+import { initWaypoints } from './waypoints.js';
 
 const statusEl = document.getElementById('status');
 function showStatus(msg, isError = false) {
@@ -54,9 +56,22 @@ sitesReady.then((sites) => {
 Promise.all([getLandmarks(), sitesReady]).then(([landmarks, sites]) =>
   initSearch(viewer, landmarks, sites, () => ground?.leave()));
 
-// Step 3: layers (need the tileset to drape on) and map view
-Promise.all([tilesetReady, sitesReady])
-  .then(([tileset, sites]) => initLayers(viewer, tileset, sites, showError))
+// High-res local terrain (optional, per site). Things that sit on the ground wait for it.
+let localTerrain = null;
+const terrainReady = Promise.all([tilesetReady, sitesReady]).then(([mars, sites]) =>
+  initLocalTerrain(viewer, mars, sites, () => ground?.refreshOutlines())
+    .catch((err) => {
+      console.warn('Local terrain unavailable', err);
+      return { tilesets: [] };
+    })
+    .then((terrain) => {
+      localTerrain = terrain;
+      return { mars, sites, terrain };
+    }));
+
+// Step 3: layers (draped on every terrain tileset) and map view
+terrainReady
+  .then(({ mars, sites, terrain }) => initLayers(viewer, [mars, ...terrain.tilesets], sites, showError))
   .catch(() => {}); // tileset failure is already reported above
 document.getElementById('map-view').addEventListener('click', () => {
   if (ground?.isActive()) {
@@ -75,35 +90,164 @@ document.getElementById('map-view').addEventListener('click', () => {
 
 // Step 4: ground mode (outlines need the tileset loaded to sit on the terrain)
 let ground = null;
-Promise.all([tilesetReady, sitesReady])
-  .then(([, sites]) => {
+terrainReady
+  .then(({ sites }) => {
     ground = initGroundMode(viewer, sites, {
       hud: document.getElementById('ground-hud'),
       minimapCanvas: document.getElementById('minimap'),
       exitButton: document.getElementById('exit-ground'),
+      haze: document.getElementById('sky-haze'),
+      onModeChange: (isGround) => {
+        waypoints?.setGroundMode(isGround);
+        showHereMarker(!isGround);
+        if (!isGround) stopPrompt.hidden = true;
+      },
+      onPose: (pose) => {
+        lastStood = { site: pose.site, lon: pose.lon, lat: pose.lat };
+        updateStopPrompt(pose);
+      },
       // while Directions is on, clicks pick route points instead of descending
-      isClickCaptured: () => directions?.isActive() ?? false,
+      // ...and a click on a rover marker opens its photos
+      isClickCaptured: (click) => Boolean(directions?.isActive() || waypoints?.hitTest(click.position)),
+      isKeyboardCaptured: () => waypoints?.isStreetViewOpen() ?? false,
     });
   })
   .catch(() => {});
 
+// "Where am I?" Mars has no GPS, so the app keeps its own answer:
+// the last place you stood in ground mode, marked with a blue dot on the map.
+let lastStood = null; // { site, lon, lat }
+const hereMarker = viewer.entities.add({
+  show: false,
+  point: {
+    pixelSize: 11,
+    color: Cesium.Color.fromCssColorString('#1e88e5'),
+    outlineColor: Cesium.Color.WHITE,
+    outlineWidth: 3,
+    heightReference: Cesium.HeightReference.CLAMP_TO_3D_TILE,
+    disableDepthTestDistance: Number.POSITIVE_INFINITY,
+  },
+  label: {
+    text: 'You were here',
+    font: '12px system-ui, sans-serif',
+    fillColor: Cesium.Color.WHITE,
+    outlineColor: Cesium.Color.BLACK,
+    outlineWidth: 3,
+    style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+    pixelOffset: new Cesium.Cartesian2(0, 14), // below the dot: a route's "A" label sits above it
+    verticalOrigin: Cesium.VerticalOrigin.TOP,
+    heightReference: Cesium.HeightReference.CLAMP_TO_3D_TILE,
+    disableDepthTestDistance: Number.POSITIVE_INFINITY,
+    distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 20_000),
+  },
+});
+function showHereMarker(on) {
+  if (on && lastStood) hereMarker.position = Cesium.Cartesian3.fromDegrees(lastStood.lon, lastStood.lat);
+  hereMarker.show = on && Boolean(lastStood);
+  viewer.scene.requestRender();
+}
+
 // Step 5: directions
 let directions = null;
-let hintTimer = null;
+let errorTimer = null;
 sitesReady.then((sites) => {
+  /**
+   * The default start for a route, best guess first:
+   * 1. where you are standing (ground mode)
+   * 2. where you last stood (map view, after a walk)
+   * 3. the centre of the view, if it is inside a site
+   * 4. the centre of the nearest site, if the camera is within 60 km of it
+   */
+  function currentLocation() {
+    const standing = ground?.position();
+    if (standing) return { site: standing.site, lon: standing.lon, lat: standing.lat, label: 'your position' };
+    if (lastStood) return { ...lastStood, label: 'where you last stood' };
+    const centre = screenCenterPosition(viewer);
+    if (centre) {
+      const c = Cesium.Cartographic.fromCartesian(centre);
+      const lon = Cesium.Math.toDegrees(c.longitude);
+      const lat = Cesium.Math.toDegrees(c.latitude);
+      const site = sites.find((s) => lon >= s.bbox[0] && lon <= s.bbox[2] && lat >= s.bbox[1] && lat <= s.bbox[3]);
+      if (site) return { site, lon, lat, label: 'the centre of your view' };
+    }
+    // 4. looking at a site from outside it: its centre (for Jezero, the landing site)
+    const camera = viewer.camera.positionWC;
+    const near = sites
+      .map((site) => ({ site, d: Cesium.Cartesian3.distance(camera, Cesium.Cartesian3.fromDegrees(site.center[0], site.center[1])) }))
+      .sort((a, b) => a.d - b.d)[0];
+    if (near && near.d < 60_000) {
+      return { site: near.site, lon: near.site.center[0], lat: near.site.center[1], label: `the centre of ${near.site.name}` };
+    }
+    return null;
+  }
+
   directions = initDirections(viewer, sites, {
     button: document.getElementById('directions'),
+    bar: document.getElementById('directions-bar'),
     card: document.getElementById('route-card'),
-    hint: (msg) => {
-      clearTimeout(hintTimer);
-      showStatus(msg);
-    },
+    currentLocation,
+    terrainOffset: (site) => localTerrain?.offsetFor(site.id) ?? null,
     error: (msg) => {
       showError(msg);
-      clearTimeout(hintTimer);
-      hintTimer = setTimeout(() => showStatus(''), 6000);
+      clearTimeout(errorTimer);
+      errorTimer = setTimeout(() => showStatus(''), 6000);
     },
   });
+});
+
+// Step 6: rover waypoints, photos and street view
+let waypoints = null;
+sitesReady.then((sites) => {
+  waypoints = initWaypoints(viewer, sites, {
+    panel: document.getElementById('photo-panel'),
+    lightbox: document.getElementById('lightbox'),
+    pov: document.getElementById('pov'),
+    isBlocked: () => directions?.isActive() ?? false,
+    // opened from the photo panel while walking: come back to the ground afterwards
+    streetViewOptions: () => (ground?.position() ? { onClose: returnToGround } : {}),
+    error: showError,
+  });
+});
+
+// Ground mode <-> rover photos: point the walker at the nearest rover stop,
+// and offer street view when standing where the rover stood.
+const AT_STOP_M = 20;
+const NEARBY_M = 1500;
+const COMPASS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+const stopPrompt = document.getElementById('stop-prompt');
+const stopPromptText = stopPrompt.querySelector('[data-role="text"]');
+const stopPromptAction = stopPrompt.querySelector('[data-role="action"]');
+let promptTarget = null; // { stop, atStop, heading }
+let lastPromptUpdate = 0;
+
+function returnToGround(stop, heading) {
+  ground?.setPose(stop.lon, stop.lat, heading);
+}
+
+function updateStopPrompt(pose) {
+  const now = performance.now();
+  if (now - lastPromptUpdate < 200) return; // a few times a second is plenty
+  lastPromptUpdate = now;
+  const near = waypoints?.nearest(pose.lon, pose.lat);
+  if (!near || near.distance > NEARBY_M) {
+    stopPrompt.hidden = true;
+    promptTarget = null;
+    return;
+  }
+  const atStop = near.distance <= AT_STOP_M;
+  promptTarget = { stop: near.stop, atStop, heading: pose.heading };
+  stopPromptText.textContent = atStop
+    ? `Perseverance stood here on sol ${near.stop.sol}.`
+    : `Nearest rover stop: sol ${near.stop.sol}, ${Math.round(near.distance)} m ${COMPASS[Math.round(near.bearing / 45) % 8]}`;
+  stopPromptAction.textContent = atStop ? 'See the rover photos' : 'Go there';
+  stopPrompt.hidden = false;
+}
+
+stopPromptAction.addEventListener('click', () => {
+  if (!promptTarget) return;
+  const { stop, atStop, heading } = promptTarget;
+  if (atStop) waypoints.openStreetView(stop, { heading, onClose: returnToGround });
+  else ground.glideTo(stop.lon, stop.lat);
 });
 
 // Cursor lon/lat readout

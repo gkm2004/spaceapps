@@ -10,8 +10,14 @@
 Writes data/waypoints/{site}.json (small, safe to commit). Raw NASA responses
 are cached in data/raw/waypoints/ (ignored by git), so reruns are offline.
 
+4. Adds `pov`: every left-Navcam colour frame taken at that exact stop, with the
+   compass direction it faces, for the street-view style viewer. Directions
+   come from each frame's camera vector (rover frame) rotated by the rover's
+   attitude quaternion into the local north/east/down frame.
+
 Output per CONTRACT.md: FeatureCollection of Points [lon, lat, height],
-properties { sol, images: [{ thumb_url, full_url, camera }] }.
+properties { sol, images: [{ thumb_url, full_url, camera }],
+             pov: [{ url, az, el, hfov, vfov }] }.
 
 Usage (from the repo root):
     python data/scripts/waypoints.py --site jezero
@@ -43,6 +49,12 @@ ROVERS = {
 FEED = "https://mars.nasa.gov/rss/api/?feed=raw_images&feedtype=json&ver=1.2"
 MIN_IMAGES, MAX_IMAGES = 3, 6
 MIN_SIDE_PX = 600  # skip small sub-frames (sun checks, calibration-target crops)
+# Navcam: 5120 x 3840 px sensor, 96 x 73 degree field of view. Frames arrive as the
+# whole sensor downsampled, or as tiles (usually quarter-sensor), so each frame's
+# field of view follows from how much of the sensor it covers.
+NAVCAM_SENSOR_PX = (5120, 3840)
+NAVCAM_FOV_DEG = (96.0, 73.0)
+POV_MAX_ELEVATION = 35.0  # frames centred higher are sky/Sun shots
 USER_AGENT = "mars-map-hackathon/0.1 (python-urllib)"
 
 
@@ -146,6 +158,59 @@ def pick_images(sol_images, site_no, drive_no, cameras):
     } for i in chosen], len(here)
 
 
+def parse_tuple(text):
+    return [float(v) for v in text.strip("()").split(",")]
+
+
+def rotate(q, v):
+    """Rotate vector v by unit quaternion q = (w, x, y, z)."""
+    w, x, y, z = q
+    u = np.array([x, y, z])
+    return v + 2.0 * np.cross(u, np.cross(u, v) + w * v)
+
+
+def pov_frames(sol_images, site_no, drive_no):
+    """Left-Navcam colour frames taken at this stop, each with the direction it faces.
+
+    az: degrees clockwise from north, el: degrees above the horizon (centre of
+    the frame); hfov/vfov: the frame's angular size in degrees.
+    """
+    frames = []
+    for i in sol_images:
+        if not (i["imageid"].startswith("NLF") and i.get("sample_type") == "Full"
+                and str(i.get("site")) == str(site_no) and str(i.get("drive")) == str(drive_no)):
+            continue
+        try:
+            v = np.array(parse_tuple(i["camera"]["camera_vector"]))  # rover frame
+            q = parse_tuple(i["attitude"])                           # rover -> local level
+            sub = parse_tuple(i["extended"]["subframeRect"])         # x, y, w, h on the sensor
+        except (KeyError, ValueError, AttributeError):
+            continue
+        n, e, d = rotate(q, v / np.linalg.norm(v))                   # north, east, down
+        el = float(np.degrees(np.arcsin(-d)))
+        if el > POV_MAX_ELEVATION or min(sub[2], sub[3]) < 900:      # sky shots, thin strips
+            continue
+        frames.append({
+            "url": i["image_files"]["large"],
+            "az": round(float(np.degrees(np.arctan2(e, n))) % 360.0, 1),
+            "el": round(el, 1),
+            "hfov": round(NAVCAM_FOV_DEG[0] * sub[2] / NAVCAM_SENSOR_PX[0], 1),
+            "vfov": round(NAVCAM_FOV_DEG[1] * sub[3] / NAVCAM_SENSOR_PX[1], 1),
+            "_t": i.get("date_taken_utc", ""),
+        })
+    # The rover often re-shoots the same direction; keep the newest frame per direction.
+    frames.sort(key=lambda f: f["_t"], reverse=True)
+    kept = []
+    for f in frames:
+        if not any(abs((f["az"] - k["az"] + 180) % 360 - 180) < 3 and abs(f["el"] - k["el"]) < 3
+                   and abs(f["hfov"] - k["hfov"]) < 1 for k in kept):
+            kept.append(f)
+    for f in kept:
+        del f["_t"]
+    # whole frames first (drawn underneath), then tiles; each group around the compass
+    return sorted(kept, key=lambda f: (-f["hfov"], f["az"], f["el"]))
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--site", default="jezero")
@@ -184,7 +249,8 @@ def main():
             "type": "Feature",
             "geometry": {"type": "Point",
                          "coordinates": [round(pr["lon"], 7), round(pr["lat"], 7), round(pr["elev_geoid"], 2)]},
-            "properties": {"sol": int(pr["sol"]), "images": images},
+            "properties": {"sol": int(pr["sol"]), "images": images,
+                           "pov": pov_frames(by_sol[int(pr["sol"])], pr["site"], pr["drive"])},
         })
 
     out = Path(args.out) if args.out else REPO / "data" / "waypoints" / f"{args.site}.json"
@@ -197,6 +263,17 @@ def main():
           f"(NASA has no full Navcam/Mastcam-Z frames for that sol)")
     print(f"matching:  {exact} waypoints used only images taken at that exact stop; "
           f"the rest were topped up from the same sol")
+    npov = np.array([len(f["properties"]["pov"]) for f in features])
+    turn = []
+    for f in features:
+        seen = np.zeros(360, bool)
+        for v in f["properties"]["pov"]:
+            half = v["hfov"] / 2 / max(np.cos(np.radians(v["el"])), 0.5)
+            seen[np.arange(int(v["az"] - half), int(v["az"] + half) + 1) % 360] = True
+        turn.append(seen.sum())
+    turn = np.array(turn)
+    print(f"pov:       {int((npov > 0).sum())} waypoints have street-view frames (median {int(np.median(npov[npov > 0]))} "
+          f"frames); full 360 at {int((turn >= 358).sum())}, at least 180 at {int((turn >= 180).sum())}")
     print(f"wrote:     {out}  ({out.stat().st_size / 1024:.0f} KB, {len(features)} waypoints, {int(c.sum())} images)")
 
 

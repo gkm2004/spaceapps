@@ -39,7 +39,7 @@ export function getRoute(site, start, end) {
     : get('/api/route', { site, start: lonLat(start), end: lonLat(end) });
 }
 
-/** -> GeoJSON FeatureCollection of Points */
+/** -> GeoJSON FeatureCollection of Points; properties { sol, images, pov } (see CONTRACT.md) */
 export function getWaypoints(site) {
   return USE_MOCK ? mock('waypoints') : get('/api/waypoints', { site });
 }

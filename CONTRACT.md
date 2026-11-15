@@ -12,7 +12,12 @@ GET /api/route?site=ID&start=LON,LAT&end=LON,LAT
 
 GET /api/waypoints?site=ID
   -> GeoJSON FeatureCollection of Points
-     properties: { sol, images: [{ thumb_url, full_url, camera }] }
+     properties: { sol, images: [{ thumb_url, full_url, camera }],
+                   pov: [{ url, az, el, hfov, vfov }] }
+     pov = photos taken at that exact spot, for the street-view viewer
+     (may be empty). az: degrees clockwise from north, el: degrees above
+     the horizon, both for the photo's centre; hfov/vfov: the photo's
+     angular width and height in degrees.
 
 GET /tiles/{site}/danger/{z}/{x}/{y}.png
   -> transparent PNG tiles: green < 10 deg slope, yellow 10-20, red > 20

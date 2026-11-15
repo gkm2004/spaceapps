@@ -1,12 +1,14 @@
-// Directions: click two points, fetch /api/route, draw it on the terrain,
-// and show a route card with stats and an elevation profile.
+// Directions: route from your current location (or a picked start) to a clicked
+// destination. Fetches /api/route, draws it on the terrain, and shows a route
+// card with stats and an elevation profile.
 import * as Cesium from 'cesium';
 import { getRoute } from './api.js';
 import { sampleTerrain } from './ground.js';
 
 const ROUTE_COLOR = '#4fc3f7'; // blue: distinct from the green/yellow/red danger layer
-const MAX_LINE_POINTS = 400;
+const MAX_LINE_POINTS = 160;
 const LINE_LIFT_M = 0.6;
+const DEFAULT_OFFSET_M = -74; // Cesium terrain vs DEM heights at Jezero, if nothing better is known
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
 const inBbox = (site, lon, lat) =>
@@ -114,16 +116,25 @@ function renderProfile(container, readout, profile, onHover) {
 /**
  * @param viewer Cesium viewer
  * @param sites entries from /api/sites
- * @param ui { button, card, hint(msg), error(msg) }
+ * @param ui {
+ *   button, bar, card, error(msg),
+ *   currentLocation(): { site, lon, lat, label } | null   where "you" are right now
+ *   terrainOffset?(site): number | null
+ * }
  * @returns { isActive() }
  */
 export function initDirections(viewer, sites, ui) {
   const { scene } = viewer;
-  const el = (id) => ui.card.querySelector(`[data-role="${id}"]`);
+  const cardEl = (role) => ui.card.querySelector(`[data-role="${role}"]`);
+  const barEl = (role) => ui.bar.querySelector(`[data-role="${role}"]`);
 
-  // 'off' | 'start' | 'end' | 'loading' | 'shown'
+  // 'off'     directions closed
+  // 'start'   waiting for a click to set the start
+  // 'end'     start is set, waiting for a click to set the destination
+  // 'loading' route requested
+  // 'shown'   route on screen; a click picks a new destination from the same start
   let state = 'off';
-  let start = null; // { site, lon, lat, cartesian }
+  let start = null; // { site, lon, lat, label }
   let requestId = 0;
   let line = null; // { positions: Cartesian3[], cumulative: number[] }
 
@@ -134,6 +145,7 @@ export function initDirections(viewer, sites, ui) {
       color: Cesium.Color.fromCssColorString(css),
       outlineColor: Cesium.Color.WHITE,
       outlineWidth: 2,
+      heightReference: Cesium.HeightReference.CLAMP_TO_3D_TILE, // positions are lon/lat; the terrain sets the height
       disableDepthTestDistance: Number.POSITIVE_INFINITY,
     },
     label: {
@@ -145,6 +157,7 @@ export function initDirections(viewer, sites, ui) {
       style: Cesium.LabelStyle.FILL_AND_OUTLINE,
       pixelOffset: new Cesium.Cartesian2(0, -16),
       verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+      heightReference: Cesium.HeightReference.CLAMP_TO_3D_TILE,
       disableDepthTestDistance: Number.POSITIVE_INFINITY,
     },
   });
@@ -168,46 +181,75 @@ export function initDirections(viewer, sites, ui) {
       width: 4,
       arcType: Cesium.ArcType.NONE,
       material: color,
-      depthFailMaterial: color.withAlpha(0.45), // the terrain mesh is coarse; keep the line visible
+      depthFailMaterial: color.withAlpha(0.45), // keep the line visible where terrain covers it
     },
   });
 
+  const place = (entity, lon, lat) => {
+    entity.position = Cesium.Cartesian3.fromDegrees(lon, lat);
+    entity.show = true;
+  };
+
+  /** Remove the route and destination; keeps the start. */
   function clearRoute() {
     requestId++; // drop any response still in flight
     line = null;
-    for (const e of [pinA, pinB, hoverDot, routeEntity]) e.show = false;
+    for (const e of [pinB, hoverDot, routeEntity]) e.show = false;
     ui.card.hidden = true;
     scene.requestRender();
   }
 
-  function setState(next) {
-    state = next;
-    ui.button.setAttribute('aria-pressed', String(state !== 'off'));
-    ui.button.classList.toggle('active', state !== 'off');
-    scene.canvas.style.cursor = state === 'start' || state === 'end' || state === 'shown' ? 'crosshair' : '';
-    ui.hint({
-      off: '',
-      start: 'Directions: click the start point inside a site zone.',
-      end: 'Directions: click the destination.',
-      loading: 'Finding the safest walking route…',
-      shown: 'Click a new start point, or close the route card.',
-    }[state]);
+  function setStart(point) {
+    clearRoute();
+    start = point;
+    if (point) place(pinA, point.lon, point.lat);
+    else pinA.show = false;
   }
 
-  /** Put the route on Cesium's terrain. Contract heights are from our DEM, which sits ~74 m above Cesium's mesh. */
-  async function drapeRoute(coords, startCartesian) {
+  function setState(next) {
+    state = next;
+    const on = state !== 'off';
+    ui.button.setAttribute('aria-pressed', String(on));
+    ui.button.classList.toggle('active', on);
+    ui.bar.hidden = !on;
+    scene.canvas.style.cursor = state === 'start' || state === 'end' || state === 'shown' ? 'crosshair' : '';
+    barEl('from').textContent = state === 'start' ? 'click the start on the map' : (start?.label ?? '');
+    barEl('to').textContent = {
+      off: '',
+      start: 'To: pick the start first',
+      end: 'To: click your destination on the map',
+      loading: 'Finding the easiest walking route…',
+      shown: 'To: the point you picked. Click the map for a new destination.',
+    }[state];
+    barEl('pick-start').hidden = state === 'start';
+    // "Use my location" only when there is one and it isn't already the start
+    const here = ui.currentLocation();
+    barEl('use-current').hidden = !here || (state !== 'start' && start?.label === here.label
+      && Math.abs(start.lon - here.lon) < 1e-6 && Math.abs(start.lat - here.lat) < 1e-6);
+    scene.requestRender();
+  }
+
+  /** Put the route on the visible terrain. Contract heights are DEM heights, not Cesium heights. */
+  async function drapeRoute(coords) {
     const step = Math.max(1, Math.ceil(coords.length / MAX_LINE_POINTS));
     const kept = coords.filter((_, i) => i % step === 0 || i === coords.length - 1);
     const cartos = kept.map(([lon, lat]) => Cesium.Cartographic.fromDegrees(lon, lat));
     let heights;
+    const exact = ui.terrainOffset?.(start.site);
     try {
-      await sampleTerrain(scene, cartos);
-      heights = cartos.map((c) => c.height);
-      if (heights.some((h) => !Number.isFinite(h))) throw new Error('terrain not loaded for part of the route');
+      if (Number.isFinite(exact)) {
+        // The local terrain is the DEM itself (shifted), so the route's own heights are exact.
+        heights = kept.map((c) => c[2] + exact);
+      } else {
+        await sampleTerrain(scene, cartos);
+        heights = cartos.map((c) => c.height);
+        if (heights.some((h) => !Number.isFinite(h))) throw new Error('terrain not loaded for part of the route');
+      }
     } catch (err) {
-      // Fallback: shift contract heights by the offset measured at the clicked start point.
+      // Fallback: shift contract heights by the offset at the start point.
       console.warn('Route not clamped to terrain, using DEM heights', err);
-      const offset = Cesium.Cartographic.fromCartesian(startCartesian).height - kept[0][2];
+      const ground = scene.sampleHeight(cartos[0]);
+      const offset = Number.isFinite(ground) ? ground - kept[0][2] : DEFAULT_OFFSET_M;
       heights = kept.map((c) => c[2] + offset);
     }
     const positions = cartos.map((c, i) => Cesium.Cartesian3.fromRadians(c.longitude, c.latitude, heights[i] + LINE_LIFT_M));
@@ -215,7 +257,7 @@ export function initDirections(viewer, sites, ui) {
     for (let i = 1; i < positions.length; i++) {
       cumulative.push(cumulative[i - 1] + Cesium.Cartesian3.distance(positions[i - 1], positions[i]));
     }
-    return { positions, cumulative };
+    return { positions, cumulative, ends: [kept[0], kept[kept.length - 1]] };
   }
 
   /** Map position at a fraction (0..1) of the way along the drawn line. */
@@ -229,15 +271,15 @@ export function initDirections(viewer, sites, ui) {
   }
 
   function showCard(props) {
-    el('distance').textContent = fmtDistance(props.distance_m);
-    el('time').textContent = fmtMinutes(props.est_minutes);
-    el('ascent').textContent = `${Math.round(props.ascent_m)} m`;
+    cardEl('distance').textContent = fmtDistance(props.distance_m);
+    cardEl('time').textContent = fmtMinutes(props.est_minutes);
+    cardEl('ascent').textContent = `${Math.round(props.ascent_m)} m`;
     const cls = slopeClass(props.max_slope_deg);
-    el('slope').textContent = `${props.max_slope_deg.toFixed(1)}°`;
-    el('slope-class').textContent = cls.label;
-    el('slope-dot').style.background = cls.color;
+    cardEl('slope').textContent = `${props.max_slope_deg.toFixed(1)}°`;
+    cardEl('slope-class').textContent = cls.label;
+    cardEl('slope-dot').style.background = cls.color;
     const total = props.profile[props.profile.length - 1][0] || 1;
-    renderProfile(el('chart'), el('readout'), props.profile, (d) => {
+    renderProfile(cardEl('chart'), cardEl('readout'), props.profile, (d) => {
       hoverDot.show = d !== null && !!line;
       if (hoverDot.show) hoverDot.position = positionAlong(d / total);
       scene.requestRender();
@@ -246,18 +288,20 @@ export function initDirections(viewer, sites, ui) {
   }
 
   async function requestRoute(end) {
-    const id = ++requestId;
+    clearRoute();
+    place(pinB, end.lon, end.lat);
+    const id = requestId;
     setState('loading');
     try {
       const route = await getRoute(start.site.id, [start.lon, start.lat], [end.lon, end.lat]);
-      const draped = await drapeRoute(route.geometry.coordinates, start.cartesian);
+      const draped = await drapeRoute(route.geometry.coordinates);
       if (id !== requestId) return; // cancelled or superseded
       line = draped;
       routeEntity.polyline.positions = draped.positions;
       routeEntity.show = true;
       // the API may have snapped the ends to walkable ground: move the pins onto the line
-      pinA.position = draped.positions[0];
-      pinB.position = draped.positions[draped.positions.length - 1];
+      place(pinA, draped.ends[0][0], draped.ends[0][1]);
+      place(pinB, draped.ends[1][0], draped.ends[1][1]);
       showCard(route.properties);
       setState('shown');
     } catch (err) {
@@ -265,9 +309,21 @@ export function initDirections(viewer, sites, ui) {
       console.error(err);
       clearRoute();
       ui.error(`No route: ${err.message ?? err}`);
-      setState('start');
+      setState('end');
     }
     scene.requestRender();
+  }
+
+  /** Start from where the user is, if that is known; otherwise ask for a click. */
+  function useCurrentLocation() {
+    const here = ui.currentLocation();
+    if (here) {
+      setStart(here);
+      setState('end');
+    } else {
+      setStart(null);
+      setState('start');
+    }
   }
 
   const handler = new Cesium.ScreenSpaceEventHandler(scene.canvas);
@@ -277,42 +333,42 @@ export function initDirections(viewer, sites, ui) {
     const cartesian = scene.pickPosition(click.position);
     if (!Cesium.defined(cartesian)) return;
     const c = Cesium.Cartographic.fromCartesian(cartesian);
-    const point = { lon: Cesium.Math.toDegrees(c.longitude), lat: Cesium.Math.toDegrees(c.latitude), cartesian };
+    const lon = Cesium.Math.toDegrees(c.longitude);
+    const lat = Cesium.Math.toDegrees(c.latitude);
 
-    if (state === 'end') {
-      if (!inBbox(start.site, point.lon, point.lat)) {
-        ui.error(`The destination must be inside the ${start.site.name} zone (the orange outline).`);
-        return;
-      }
-      pinB.position = cartesian;
-      pinB.show = true;
-      requestRoute(point);
-    } else {
-      const site = sites.find((s) => inBbox(s, point.lon, point.lat));
+    if (state === 'start') {
+      const site = sites.find((s) => inBbox(s, lon, lat));
       if (!site) {
         ui.error('Routes only work inside a site zone (the orange outline).');
         return;
       }
-      clearRoute();
-      start = { ...point, site };
-      pinA.position = cartesian;
-      pinA.show = true;
+      setStart({ site, lon, lat, label: 'the point you picked' });
       setState('end');
+    } else {
+      if (!inBbox(start.site, lon, lat)) {
+        ui.error(`The destination must be inside the ${start.site.name} zone (the orange outline).`);
+        return;
+      }
+      requestRoute({ lon, lat });
     }
-    scene.requestRender();
   }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
 
   ui.button.addEventListener('click', () => {
     if (state === 'off') {
-      setState('start');
+      useCurrentLocation();
     } else {
-      clearRoute();
+      setStart(null);
       setState('off');
     }
   });
-  el('close').addEventListener('click', () => {
+  barEl('pick-start').addEventListener('click', () => {
+    setStart(null);
+    setState('start');
+  });
+  barEl('use-current').addEventListener('click', useCurrentLocation);
+  cardEl('close').addEventListener('click', () => {
     clearRoute();
-    setState(state === 'off' ? 'off' : 'start');
+    if (state !== 'off') setState(start ? 'end' : 'start');
   });
 
   return { isActive: () => state !== 'off' };

@@ -14,6 +14,10 @@ python data/scripts/crop_dem.py --src PATH/TO/DEM.tif --site jezero --lon 77.450
 python data/scripts/slope.py --site jezero
 python data/scripts/danger_tiles.py --site jezero
 python data/scripts/waypoints.py --site jezero      # needs internet (NASA feeds)
+
+# optional: high-resolution 3D ground for ground mode (83 MB, ignored by git)
+python data/scripts/crop_dem.py --src PATH/TO/DEM.tif --site jezero --res 1 --out data/processed/jezero_dem_1m.tif
+python data/scripts/terrain_mesh.py --site jezero
 ```
 
 | Step | Writes |
@@ -21,6 +25,7 @@ python data/scripts/waypoints.py --site jezero      # needs internet (NASA feeds
 | `crop_dem.py` | `data/processed/{site}_dem.tif`: 3 x 3 km at 2 m, local equirectangular (true metres) |
 | `slope.py` | `data/processed/{site}_slope.npy`, `{site}_cost.npy`, `{site}_grid.json` (transform + CRS) |
 | `danger_tiles.py` | `data/tiles/{site}/danger/{z}/{x}/{y}.png` + `tiles.json` |
+| `terrain_mesh.py` | `data/terrain/{site}/tileset.json` + `.glb` tiles: the DEM as a 3D Tiles terrain model, 2 m mesh, shaded-relief colour |
 | `waypoints.py` | `data/waypoints/{site}.json`: rover stops inside the site bbox, each with 3-6 photos (small, committed) |
 
 Source DEM for Jezero:

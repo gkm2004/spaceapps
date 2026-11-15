@@ -374,3 +374,314 @@ body {
   font-variant-numeric: tabular-nums;
   min-height: 1.3em;
 }
+
+/* Rover stop photo panel */
+#photo-panel {
+  top: 150px;
+  right: 16px;
+  width: 276px;
+  max-height: calc(100% - 420px);
+  min-height: 160px;
+  overflow-y: auto;
+}
+
+#photo-panel header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+#photo-panel header h2 {
+  margin: 0;
+}
+
+#photo-panel header button {
+  padding: 0 8px;
+  font-size: 18px;
+  line-height: 24px;
+}
+
+#photo-panel .where {
+  margin: 4px 0 8px;
+  font-size: 11px;
+  opacity: 0.7;
+  font-variant-numeric: tabular-nums;
+}
+
+.panel button.primary {
+  width: 100%;
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+
+.panel button:disabled {
+  opacity: 0.5;
+  cursor: default;
+  background: transparent;
+  border-color: rgba(255, 255, 255, 0.2);
+  font-weight: 400;
+}
+
+.thumbs {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.thumbs button {
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  overflow: hidden;
+  aspect-ratio: 4 / 3;
+  background: #000;
+}
+
+.thumbs img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* Enlarged photo */
+#lightbox {
+  position: fixed;
+  inset: 0;
+  margin: 0;
+  z-index: 30;
+  background: rgba(0, 0, 0, 0.88);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  cursor: zoom-out;
+}
+
+#lightbox[hidden] {
+  display: none;
+}
+
+#lightbox img {
+  max-width: 94vw;
+  max-height: 86vh;
+  border-radius: 4px;
+}
+
+#lightbox figcaption {
+  color: var(--panel-fg);
+  font-size: 13px;
+  opacity: 0.8;
+}
+
+/* Street view */
+#pov {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  background: #0b0908;
+  outline: none;
+}
+
+#pov[hidden] {
+  display: none;
+}
+
+#pov .stage {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  cursor: grab;
+  touch-action: none;
+}
+
+#pov .stage:active {
+  cursor: grabbing;
+}
+
+#pov .stage img {
+  position: absolute;
+  top: 0;
+  left: 0;
+  max-width: none;
+  user-select: none;
+  pointer-events: none;
+  will-change: transform;
+}
+
+.pov-bar,
+.pov-nav {
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  white-space: nowrap;
+}
+
+.pov-bar {
+  top: 16px;
+}
+
+.pov-nav {
+  bottom: 16px;
+  font-size: 12px;
+}
+
+.pov-nav span {
+  opacity: 0.7;
+}
+
+.pov-bar .compass {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  min-width: 64px;
+  text-align: center;
+}
+
+.pov-empty {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  margin: 0;
+  color: var(--panel-fg);
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+/* Ground mode: haze band on the horizon and a darker zenith, over the canvas.
+   --horizon (px from the top) and --deg (px per degree) are set by ground.js. */
+#sky-haze {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    to bottom,
+    rgba(96, 62, 40, 0.5) calc(var(--horizon, 50%) - 60 * var(--deg, 10px)),
+    rgba(96, 62, 40, 0) calc(var(--horizon, 50%) - 14 * var(--deg, 10px)),
+    rgba(240, 212, 178, 0) calc(var(--horizon, 50%) - 7 * var(--deg, 10px)),
+    rgba(240, 212, 178, 0.62) var(--horizon, 50%),
+    rgba(240, 212, 178, 0) calc(var(--horizon, 50%) + 5 * var(--deg, 10px))
+  );
+}
+
+#sky-haze[hidden] {
+  display: none;
+}
+
+/* Nearest rover stop prompt in the ground HUD */
+#stop-prompt {
+  border-top: 1px solid rgba(255, 255, 255, 0.15);
+  padding-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+#stop-prompt[hidden] {
+  display: none;
+}
+
+#stop-prompt p {
+  font-size: 12px;
+  opacity: 1;
+}
+
+/* Street view: zoom-and-fade when moving between stops */
+#pov .stage {
+  transition: transform 0.26s ease-in, opacity 0.26s ease-in;
+}
+
+#pov .stage.leaving {
+  transform: scale(var(--travel-out, 1.35));
+  opacity: 0;
+}
+
+#pov .stage.arriving {
+  transition: none;
+  transform: scale(var(--travel-in, 0.8));
+  opacity: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #pov .stage {
+    transition: opacity 0.2s;
+  }
+  #pov .stage.leaving,
+  #pov .stage.arriving {
+    transform: none;
+  }
+}
+
+/* Left column: directions, route card and rover-stop panel stack instead of overlapping */
+#left-stack {
+  position: absolute;
+  top: 110px;
+  left: 16px;
+  width: 288px;
+  max-height: calc(100% - 110px - 110px);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+  pointer-events: none; /* the gaps let clicks through to the globe */
+  scrollbar-width: thin;
+}
+
+#left-stack > .panel {
+  position: static;
+  width: auto;
+  max-height: none;
+  min-height: 0;
+  box-sizing: border-box;
+  flex: none;
+  pointer-events: auto;
+}
+
+#left-stack > .panel[hidden] {
+  display: none;
+}
+
+/* Directions bar */
+#directions-bar .leg {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+#directions-bar .pin {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #1e88e5;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+}
+
+#directions-bar .leg-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 6px 0 8px 26px;
+}
+
+#directions-bar .leg-actions button {
+  font-size: 12px;
+  padding: 4px 8px;
+}
+
+#directions-bar .leg-actions button[hidden] {
+  display: none;
+}

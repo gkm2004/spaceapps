@@ -24,12 +24,11 @@ async function createDangerLayer(site) {
 /**
  * Builds the layer panel.
  * @param viewer Cesium viewer
- * @param tileset the Mars Cesium3DTileset
+ * @param tilesets every terrain tileset to drape on: the global Mars tileset plus any local high-res terrain
  * @param sites entries from /api/sites
  * @param onError (message) => void
  */
-export function initLayers(viewer, tileset, sites, onError) {
-  const panel = document.getElementById('layer-list');
+export function initLayers(viewer, tilesets, sites, onError) {
   const legend = document.getElementById('danger-legend');
   let dangerLayers = null; // created on first use
 
@@ -39,7 +38,14 @@ export function initLayers(viewer, tileset, sites, onError) {
       label: 'Slope danger',
       async set(on) {
         if (on && !dangerLayers) {
-          dangerLayers = await Promise.all(sites.map(createDangerLayer));
+          // an ImageryLayer belongs to one tileset, so each tileset gets its own copy
+          dangerLayers = [];
+          for (const tileset of tilesets) {
+            for (const layer of await Promise.all(sites.map(createDangerLayer))) {
+              dangerLayers.push(layer);
+              tileset.imageryLayers.add(layer);
+            }
+          }
           for (const layer of dangerLayers) {
             layer.imageryProvider.errorEvent.addEventListener((err) => {
               // Tiles outside the data simply don't exist; only report a dead server once.
@@ -47,7 +53,6 @@ export function initLayers(viewer, tileset, sites, onError) {
                 onError('Danger tiles could not be loaded. Is the backend running?');
               }
             });
-            tileset.imageryLayers.add(layer);
           }
         }
         for (const layer of dangerLayers ?? []) layer.show = on;
@@ -57,24 +62,31 @@ export function initLayers(viewer, tileset, sites, onError) {
     },
   ];
 
-  for (const layer of layers) {
-    const label = document.createElement('label');
-    const box = document.createElement('input');
-    box.type = 'checkbox';
-    box.id = `layer-${layer.id}`;
-    box.addEventListener('change', async () => {
-      box.disabled = true;
-      try {
-        await layer.set(box.checked);
-      } catch (err) {
-        console.error(err);
-        box.checked = false;
-        onError(`Could not load layer "${layer.label}": ${err.message ?? err}`);
-      } finally {
-        box.disabled = false;
-      }
-    });
-    label.append(box, ` ${layer.label}`);
-    panel.append(label);
-  }
+  for (const layer of layers) addLayerCheckbox(layer, onError);
+}
+
+/**
+ * Add a checkbox to the layer panel.
+ * @param layer { id, label, checked?, set(on) } where set may be async
+ */
+export function addLayerCheckbox(layer, onError = console.error) {
+  const label = document.createElement('label');
+  const box = document.createElement('input');
+  box.type = 'checkbox';
+  box.id = `layer-${layer.id}`;
+  box.checked = Boolean(layer.checked);
+  box.addEventListener('change', async () => {
+    box.disabled = true;
+    try {
+      await layer.set(box.checked);
+    } catch (err) {
+      console.error(err);
+      box.checked = false;
+      onError(`Could not load layer "${layer.label}": ${err.message ?? err}`);
+    } finally {
+      box.disabled = false;
+    }
+  });
+  label.append(box, ` ${layer.label}`);
+  document.getElementById('layer-list').append(label);
 }

@@ -7,6 +7,7 @@ falls back to the mock files in frontend/mock/ so the frontend still runs.
 
 import json
 import logging
+import mimetypes
 import re
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -20,10 +21,13 @@ from routing import RouteError, Site
 REPO = Path(__file__).resolve().parent.parent
 PROCESSED = REPO / "data" / "processed"
 TILES = REPO / "data" / "tiles"
+TERRAIN = REPO / "data" / "terrain"  # {site}/tileset.json, written by data/scripts/terrain_mesh.py
 WAYPOINTS = REPO / "data" / "waypoints"  # {site}.json, written by data/scripts/waypoints.py
 MOCK = REPO / "frontend" / "mock"
 
 SITE_NAMES = {"jezero": "Jezero Crater", "gale": "Gale Crater"}
+
+mimetypes.add_type("model/gltf-binary", ".glb")  # terrain tiles
 
 log = logging.getLogger("uvicorn.error")
 sites: dict[str, Site] = {}
@@ -102,3 +106,8 @@ def get_waypoints(site: str = Query(..., description="Site id from /api/sites"))
 # GET /tiles/{site}/danger/{z}/{x}/{y}.png (written by data/scripts/danger_tiles.py)
 TILES.mkdir(parents=True, exist_ok=True)
 app.mount("/tiles", StaticFiles(directory=TILES), name="tiles")
+
+# GET /terrain/{site}/tileset.json + tiles: high-resolution 3D terrain for ground mode.
+# Optional: the frontend falls back to Cesium's global terrain when it is missing.
+TERRAIN.mkdir(parents=True, exist_ok=True)
+app.mount("/terrain", StaticFiles(directory=TERRAIN), name="terrain")
