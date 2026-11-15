@@ -12,7 +12,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from routing import FLAT_SPEED_M_S, PROFILE_STEP_M, RouteError, Site, compute_route
+from routing import (FLAT_SPEED_M_S, MIN_WINDOW_MARGIN_CELLS, PROFILE_STEP_M, RouteError, Site,
+                     compute_route, compute_route_windowed)
 
 CELL = (2.0, 2.0)
 PROCESSED = Path(__file__).resolve().parents[2] / "data" / "processed"
@@ -135,6 +136,54 @@ def test_route_avoids_a_steep_band_when_the_detour_is_cheaper():
     cost[30:90, 95:105] = 5.0  # steep but passable ridge across the direct line
     r = compute_route(cost, slope, dem, CELL, (60, 20), (60, 180))
     assert (cost[r.cells[:, 0], r.cells[:, 1]] == 1.0).all()
+
+
+# -- windowed search (large sites) ----------------------------------------------
+
+def big_flat(shape=(900, 1200)):
+    return np.ones(shape, np.float32), np.zeros(shape, np.float32), np.full(shape, -2500.0, np.float32)
+
+
+def test_windowed_route_matches_whole_grid_route():
+    rng = np.random.default_rng(3)
+    cost, slope, dem = big_flat()
+    cost *= rng.uniform(1.0, 3.0, cost.shape).astype(np.float32)  # varied terrain, no walls
+    start, end = (400, 300), (520, 700)
+    full = compute_route(cost, slope, dem, CELL, start, end)
+    win = compute_route_windowed(cost, slope, dem, CELL, start, end)
+    assert_connected(win.cells, start, end)
+    # same optimum unless the best path leaves the box; allow a hair of slack for that
+    assert win.est_minutes == pytest.approx(full.est_minutes, rel=0.01)
+    assert win.distance_m == pytest.approx(full.distance_m, rel=0.02)
+
+
+def test_windowed_route_widens_the_box_when_blocked():
+    cost, slope, dem = big_flat()
+    cost[:, 600] = np.inf
+    gap_row = 860  # far outside the first box around the two points
+    cost[gap_row:gap_row + 3, 600] = 1.0
+    start, end = (100, 550), (100, 650)
+    assert gap_row > max(start[0], end[0]) + MIN_WINDOW_MARGIN_CELLS
+    r = compute_route_windowed(cost, slope, dem, CELL, start, end)
+    assert_connected(r.cells, start, end)
+    rows, cols = r.cells[:, 0], r.cells[:, 1]
+    assert np.isfinite(cost[rows, cols]).all()
+    assert rows.max() >= gap_row  # it found the gap
+
+
+def test_windowed_route_reports_no_route_only_after_the_whole_grid():
+    cost, slope, dem = big_flat()
+    cost[:, 600] = np.inf
+    with pytest.raises(RouteError, match="No walkable route"):
+        compute_route_windowed(cost, slope, dem, CELL, (100, 550), (100, 650))
+
+
+def test_windowed_route_near_the_grid_edge():
+    cost, slope, dem = big_flat()
+    start, end = (2, 3), (40, 1195)
+    r = compute_route_windowed(cost, slope, dem, CELL, start, end)
+    assert_connected(r.cells, start, end)
+    assert r.distance_m <= straight_m(start, end) * MAX_GRID_DETOUR + 1e-6
 
 
 # -- errors ---------------------------------------------------------------------

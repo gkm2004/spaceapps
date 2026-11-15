@@ -86,6 +86,38 @@ def compute_route(cost, slope, dem, cell_size, start, end) -> RouteResult:
     )
 
 
+MIN_WINDOW_MARGIN_CELLS = 150  # 300 m at 2 m cells
+
+
+def compute_route_windowed(cost, slope, dem, cell_size, start, end) -> RouteResult:
+    """compute_route, but searching only a box around the two points.
+
+    The search cost grows with the number of cells, so on a large site a
+    whole-grid search takes seconds. The box is the start/end bounding box
+    plus a margin of half its longer side (at least 300 m). If no route fits
+    inside it, the margin is widened, ending with the whole grid, so a route
+    that needs a long detour is still found.
+    """
+    rows, cols = cost.shape
+    span = max(abs(start[0] - end[0]), abs(start[1] - end[1]))
+    margin = max(MIN_WINDOW_MARGIN_CELLS, span // 2)
+    while True:
+        r0, r1 = max(0, min(start[0], end[0]) - margin), min(rows, max(start[0], end[0]) + margin + 1)
+        c0, c1 = max(0, min(start[1], end[1]) - margin), min(cols, max(start[1], end[1]) + margin + 1)
+        whole = (r0, c0, r1, c1) == (0, 0, rows, cols)
+        try:
+            result = compute_route(
+                cost[r0:r1, c0:c1], slope[r0:r1, c0:c1], dem[r0:r1, c0:c1], cell_size,
+                (start[0] - r0, start[1] - c0), (end[0] - r0, end[1] - c0))
+        except RouteError as exc:
+            if whole or "No walkable route" not in str(exc):
+                raise
+            margin *= 4  # blocked inside the box: look further afield
+            continue
+        result.cells = result.cells + np.array([r0, c0])
+        return result
+
+
 class Site:
     """One site's grids plus its georeferencing."""
 
@@ -157,7 +189,7 @@ class Site:
 
     # -- routing -------------------------------------------------------------
     def _route_cells(self, start, end) -> RouteResult:
-        return compute_route(self.cost, self.slope, self.dem, self.cell_size, start, end)
+        return compute_route_windowed(self.cost, self.slope, self.dem, self.cell_size, start, end)
 
     def route(self, start_lonlat, end_lonlat) -> dict:
         """GeoJSON Feature per CONTRACT.md. Cached per (start cell, end cell)."""

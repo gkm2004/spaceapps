@@ -9,7 +9,8 @@ import { heavyTilesets, sampleTerrain } from './ground.js';
 import { addHeightmap, setLocalTerrainVisible } from './heights.js';
 import { addLayerCheckbox } from './layers.js';
 
-const ACTIVE_WITHIN_M = 6000; // camera closer than this to the site centre -> local terrain
+const MIN_ACTIVE_WITHIN_M = 6000; // camera closer than this to the site centre -> local terrain
+const ACTIVE_SPANS = 2.5; // ...or within this many site widths, so a big site still shows from its overview
 const OVERLAP_M = 40; // our model reaches this far under Cesium's ground, so no gap at the seam
 const DEFAULT_OFFSET_M = -74; // Cesium terrain height minus DEM height at Jezero (see data/scripts/README.md)
 
@@ -39,7 +40,7 @@ async function measureOffset(scene, controlPoints) {
  */
 export async function initLocalTerrain(viewer, mars, sites, onChange) {
   const { scene, camera } = viewer;
-  const locals = []; // [{ tileset, center: Cartesian3 }]
+  const locals = []; // [{ tileset, center: Cartesian3, radius: metres }]
   const offsets = new Map(); // site id -> metres added to DEM heights
   const holes = [];
 
@@ -98,7 +99,12 @@ export async function initLocalTerrain(viewer, mars, sites, onChange) {
         west + dLon, north - dLat,
       ]),
     }));
-    locals.push({ tileset, center: Cesium.Cartesian3.fromDegrees((west + east) / 2, (south + north) / 2, extras.min_height ?? 0) });
+    const widthM = Cesium.Math.toRadians(north - south) * Cesium.Ellipsoid.MARS.maximumRadius;
+    locals.push({
+      tileset,
+      center: Cesium.Cartesian3.fromDegrees((west + east) / 2, (south + north) / 2, extras.min_height ?? 0),
+      radius: Math.max(MIN_ACTIVE_WITHIN_M, ACTIVE_SPANS * widthM),
+    });
   }
 
   if (locals.length === 0) return { tilesets: [], offsetFor: () => null };
@@ -109,7 +115,7 @@ export async function initLocalTerrain(viewer, mars, sites, onChange) {
   let wanted = true; // the layer checkbox
   let active = false;
   function update() {
-    const near = locals.some((l) => Cesium.Cartesian3.distance(camera.positionWC, l.center) < ACTIVE_WITHIN_M);
+    const near = locals.some((l) => Cesium.Cartesian3.distance(camera.positionWC, l.center) < l.radius);
     const next = wanted && near;
     if (next === active) return;
     active = next;
