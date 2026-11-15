@@ -25,7 +25,7 @@ function bearing(from, to) {
  * @param root the #pov element
  * @param hooks { onStop(stop), onClose(stop) }
  * @returns { open(stops, index), close(), isOpen() }
- *   stops: [{ sol, lon, lat, pov: [{ url, az, el, hfov, vfov }] }] in travel order
+ *   stops: [{ rover, sol, lon, lat, pov: [{ url, az, el, hfov, vfov }] }] in travel order
  */
 export function initPov(root, hooks = {}) {
   const stage = root.querySelector('[data-role="stage"]');
@@ -119,7 +119,7 @@ export function initPov(root, hooks = {}) {
     }
     view.pitch = clamp(view.pitch, ...pitchRange);
 
-    title.textContent = `Perseverance · Sol ${stop.sol} · stop ${index + 1} of ${stops.length}`;
+    title.textContent = `${stop.rover ?? 'Rover'} · Sol ${stop.sol} · stop ${index + 1} of ${stops.length}`;
     prevBtn.disabled = index === 0;
     nextBtn.disabled = index === stops.length - 1;
     hooks.onStop?.(stop);

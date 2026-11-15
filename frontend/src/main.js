@@ -60,14 +60,17 @@ Promise.all([getLandmarks(), sitesReady]).then(([landmarks, sites]) =>
 // High-res local terrain (optional, per site). Things that sit on the ground wait for it.
 let localTerrain = null;
 const terrainReady = Promise.all([tilesetReady, sitesReady]).then(([mars, sites]) =>
-  initLocalTerrain(viewer, mars, sites, () => ground?.refreshOutlines())
+  initLocalTerrain(viewer, mars, sites, {
+    onChange: () => ground?.refreshOutlines(),
+    // exact heights are in: stop clamping rover markers to the terrain
+    onHeights: () => waypoints?.refreshHeights(),
+  })
     .catch((err) => {
       console.warn('Local terrain unavailable', err);
       return { tilesets: [] };
     })
     .then((terrain) => {
       localTerrain = terrain;
-      waypoints?.refreshHeights(); // heightmaps are in: stop clamping markers to the terrain
       return { mars, sites, terrain };
     }));
 
@@ -239,7 +242,7 @@ function updateStopPrompt(pose) {
   const atStop = near.distance <= AT_STOP_M;
   promptTarget = { stop: near.stop, atStop, heading: pose.heading };
   stopPromptText.textContent = atStop
-    ? `Perseverance stood here on sol ${near.stop.sol}.`
+    ? `${near.stop.rover} stood here on sol ${near.stop.sol}.`
     : `Nearest rover stop: sol ${near.stop.sol}, ${Math.round(near.distance)} m ${COMPASS[Math.round(near.bearing / 45) % 8]}`;
   stopPromptAction.textContent = atStop ? 'See the rover photos' : 'Go there';
   stopPrompt.hidden = false;

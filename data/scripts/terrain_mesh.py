@@ -35,6 +35,7 @@ Usage (from the repo root):
 import argparse
 import io
 import json
+import math
 import shutil
 import struct
 from pathlib import Path
@@ -52,14 +53,25 @@ PROCESSED = REPO / "data" / "processed"
 MARS_A = 3396190.0
 MARS_B = 3376200.0
 
-TEXTURE_PX = 1024       # per tile, every level
-SURFACE_M_PER_PX = 0.5  # resolution of the baked surface image
+TEXTURE_PX = 1024       # largest texture per tile
 SKIRT_M = 12.0
-LEVELS = [              # (tiles per side, cells per mesh step, geometric error in metres)
-    (1, 8, 6.0),
-    (3, 4, 2.5),
-    (6, 1, 0.0),
-]
+STRIP_ROWS = 1024       # the surface image is shaded in strips to keep memory low
+
+# Levels of detail: (tiles per side, cells per mesh step, geometric error in metres).
+# The finest level must stay under 65,536 vertices per tile (16-bit indices), so a
+# larger site gets more, not bigger, tiles.
+LEVELS_SMALL = [(1, 8, 6.0), (3, 4, 2.5), (6, 1, 0.0)]                   # up to ~3 km
+LEVELS_LARGE = [(1, 16, 12.0), (3, 8, 6.0), (6, 4, 2.5), (12, 1, 0.0)]   # up to ~6 km
+LEVELS = LEVELS_SMALL  # chosen in main() from the DEM size
+
+
+def choose_levels(cells):
+    levels = LEVELS_SMALL if cells <= 1600 else LEVELS_LARGE
+    finest = cells // levels[-1][0]
+    if (finest + 3) ** 2 > 65535:
+        raise SystemExit(f"Site too large for this script ({cells} cells per side): "
+                         "crop a smaller area or add a level to LEVELS_LARGE.")
+    return levels
 
 
 def to_ecef(lon_deg, lat_deg, h):
@@ -78,28 +90,38 @@ def hillshade(z, cell, azimuth, altitude):
     gy, gx = np.gradient(z, cell)
     slope = np.arctan(np.hypot(gx, gy))
     aspect = np.arctan2(-gx, gy)
-    az, alt = np.radians(azimuth), np.radians(altitude)
-    return np.sin(alt) * np.cos(slope) + np.cos(alt) * np.sin(slope) * np.cos(az - aspect)
+    # plain Python floats, not numpy scalars: those would promote float32 input to float64
+    az, alt = math.radians(azimuth), math.radians(altitude)
+    return math.sin(alt) * np.cos(slope) + math.cos(alt) * np.sin(slope) * np.cos(az - aspect)
 
 
-def surface_image(dem, cell, out_px, seed=0):
-    """Mars-tinted shaded relief, uint8 RGB, out_px x out_px, north at the top."""
-    z = dem.astype(np.float64)
-    # Sun from the north-west plus a weak fill light, so slopes facing away aren't black.
-    # Relief is exaggerated 2x for the shading only (not the geometry): Jezero's floor is
-    # nearly level, and true-scale shading leaves it one flat colour at eye level.
-    shade = 0.75 * hillshade(z * 2.0, cell, 315, 38) + 0.25 * hillshade(z * 2.0, cell, 60, 55)
-    # Local relief: bumps a little brighter, hollows darker (cheap ambient occlusion).
-    relief = z - ndimage.gaussian_filter(z, 12.0 / cell)
-    relief = np.clip(relief / 1.5, -1, 1)
-    # Broad albedo variation with elevation, like dust settling in low ground.
-    broad = ndimage.gaussian_filter(z, 60.0 / cell)
-    broad = (broad - broad.min()) / max(np.ptp(broad), 1e-6)
+def surface_image(dem, cell, out_px, extent_m, seed=0):
+    """Mars-tinted shaded relief, uint8 RGB, out_px x out_px, north at the top.
 
-    v = np.clip((shade - 0.25) / 0.6, 0, 1)
-    v = np.clip(v + 0.20 * relief + 0.08 * (broad - 0.5), 0, 1)
+    Works in float32 and in horizontal strips: a 6 km site at 1 m is 36 million
+    pixels, and doing this in one float64 pass needs several GB.
+    """
+    rows = dem.shape[0]
+    lo, hi = float(dem.min()), float(dem.max())
+    halo = int(np.ceil(4 * 60.0 / cell))  # 4 sigma of the widest filter below
+    v = np.empty(dem.shape, np.float32)
+    for r0 in range(0, rows, STRIP_ROWS):
+        a0, a1 = max(0, r0 - halo), min(rows, r0 + STRIP_ROWS + halo)
+        z = dem[a0:a1].astype(np.float32)
+        # Sun from the north-west plus a weak fill light, so slopes facing away aren't black.
+        # Relief is exaggerated 2x for the shading only (not the geometry): Jezero's floor is
+        # nearly level, and true-scale shading leaves it one flat colour at eye level.
+        shade = 0.75 * hillshade(z * 2.0, cell, 315, 38) + 0.25 * hillshade(z * 2.0, cell, 60, 55)
+        # Local relief: bumps a little brighter, hollows darker (cheap ambient occlusion).
+        relief = np.clip((z - ndimage.gaussian_filter(z, 12.0 / cell)) / 1.5, -1, 1)
+        # Broad albedo variation with elevation, like dust settling in low ground.
+        broad = (ndimage.gaussian_filter(z, 60.0 / cell) - lo) / max(hi - lo, 1e-6)
+        strip = np.clip((shade - 0.25) / 0.6, 0, 1)
+        strip = np.clip(strip + 0.20 * relief + 0.08 * (broad - 0.5), 0, 1)
+        n = min(STRIP_ROWS, rows - r0)
+        v[r0:r0 + n] = strip[r0 - a0: r0 - a0 + n]
+        del z, shade, relief, broad, strip
 
-    v = v.astype(np.float32)  # the upsampled image is large; float32 halves the memory
     zoom = out_px / v.shape[0]
     if abs(zoom - 1) > 1e-6:
         v = np.clip(ndimage.zoom(v, zoom, order=3), 0, 1)
@@ -109,19 +131,23 @@ def surface_image(dem, cell, out_px, seed=0):
     # your feet: pebble-scale grain plus patchy dust at a few metres and tens of metres.
     # (Synthetic. Only the relief shading above comes from data.)
     rng = np.random.default_rng(seed)
-    px = 1.0 / (2976.0 / out_px)  # pixels per metre, roughly
-    grain = np.zeros(v.shape, np.float32)
+    px = out_px / extent_m  # pixels per metre
     for metres, weight in ((0.6, 0.30), (2.5, 0.30), (9.0, 0.25), (35.0, 0.15)):
         layer = ndimage.gaussian_filter(rng.standard_normal(v.shape, dtype=np.float32), max(metres * px / 2, 0.6))
-        grain += weight * layer / max(float(layer.std()), 1e-6)
-    v = np.clip(v + 0.085 * grain, 0, 1)
+        v += (0.085 * weight / max(float(layer.std()), 1e-6)) * layer
+        del layer
+    np.clip(v, 0, 1, out=v)
 
     # dark basalt -> dusty rose-brown -> pale dust. Tones picked to sit close to the
     # orbital imagery in Cesium's Mars tileset, so the edge of the site is less stark.
     stops = np.array([0.0, 0.45, 0.8, 1.0])
     colors = np.array([[50, 36, 32], [133, 100, 88], [181, 144, 126], [216, 188, 170]], np.float64)
-    rgb = np.stack([np.interp(v, stops, colors[:, k]) for k in range(3)], axis=-1)
-    return rgb.round().astype(np.uint8)
+    rgb = np.empty(v.shape + (3,), np.uint8)
+    for r0 in range(0, v.shape[0], STRIP_ROWS):
+        part = v[r0:r0 + STRIP_ROWS]
+        for k in range(3):
+            rgb[r0:r0 + STRIP_ROWS, :, k] = np.interp(part, stops, colors[:, k]).round()
+    return rgb
 
 
 def write_glb(path, positions, uvs, indices, jpeg, center):
@@ -200,13 +226,15 @@ def main():
     rows, cols = dem.shape
     cell = transform.a
     cells = rows - 1  # mesh spans cell centres 0..rows-1
-    finest_tiles = LEVELS[-1][0]
-    if rows != cols or cells % (finest_tiles * LEVELS[0][1]) not in (0,):
-        # 1500 cells -> use 1496 so every level's step divides the tile size; trim the last rows/cols
-        usable = (cells // (finest_tiles * LEVELS[0][1])) * finest_tiles * LEVELS[0][1]
-        dem = dem[: usable + 1, : usable + 1]
-        rows = cols = usable + 1
-        cells = usable
+    global LEVELS
+    LEVELS = choose_levels(cells)
+    # Every level's tiles must divide into whole mesh steps: trim the grid to the largest
+    # size that all levels divide (1499 -> 1488 cells, 2999 -> 2976), dropping the last rows/cols.
+    unit = math.lcm(*(n * step for n, step, _ in LEVELS))
+    usable = (min(rows, cols) - 1) // unit * unit
+    dem = dem[: usable + 1, : usable + 1]
+    rows = cols = usable + 1
+    cells = usable
 
     # lon/lat of every cell centre (these values are used as-is in Cesium)
     to_geo = Transformer.from_crs(crs, crs.geodetic_crs, always_xy=True)
@@ -219,7 +247,7 @@ def main():
     shade_path = PROCESSED / f"{args.site}_dem_1m.tif"
     if shade_path.exists():
         with rasterio.open(shade_path) as src:
-            fine = src.read(1).astype(np.float64)
+            fine = src.read(1)  # float32: at 6 km this is 144 MB, float64 would double it
             fcell = src.transform.a
         # same extent as the trimmed geometry grid (cell centres 0..cells of the 2 m grid)
         k = int(round(cell / fcell))
@@ -227,12 +255,16 @@ def main():
     else:
         fine, fcell = dem, cell
     extent_m = cells * cell
-    surf_px = int(round(extent_m / SURFACE_M_PER_PX))
+    # Baked surface: 0.5 m per pixel on a small site; 1 m on a large one (same image size,
+    # and the same memory, as a small site at 0.5 m).
+    surface_m_per_px = 0.5 if extent_m <= 3200 else 1.0
+    surf_px = int(round(extent_m / surface_m_per_px))
     print(f"shading {fine.shape[1]} x {fine.shape[0]} DEM at {fcell:g} m -> {surf_px} px surface image ...")
     # The fine grid covers cell *areas*; the mesh spans cell *centres*: crop half a 2 m cell each side.
     half = int(round(cell / 2 / fcell))
     fine = fine[half: half + int(round(extent_m / fcell)) + 1, half: half + int(round(extent_m / fcell)) + 1]
-    surface = surface_image(fine, fcell, surf_px)
+    surface = surface_image(fine, fcell, surf_px, extent_m)
+    del fine
 
     out = Path(args.out) if args.out else REPO / "data" / "terrain" / args.site
     if out.exists():
@@ -268,11 +300,11 @@ def main():
         idx = grid_indices(len(latp), len(lonp))
         assert len(ecef) <= 65535, "tile too dense for 16-bit indices"
 
-        px0 = int(round(c0 * cell / SURFACE_M_PER_PX))
-        py0 = int(round(r0 * cell / SURFACE_M_PER_PX))
-        pn = int(round(size * cell / SURFACE_M_PER_PX))
+        px0 = int(round(c0 * cell / surface_m_per_px))
+        py0 = int(round(r0 * cell / surface_m_per_px))
+        pn = int(round(size * cell / surface_m_per_px))
         img = Image.fromarray(surface[py0: py0 + pn, px0: px0 + pn])
-        if pn != TEXTURE_PX:
+        if pn > TEXTURE_PX:  # shrink coarse levels; never upscale (it adds bytes, not detail)
             img = img.resize((TEXTURE_PX, TEXTURE_PX), Image.LANCZOS)
         buf = io.BytesIO()
         img.save(buf, format="JPEG", quality=86)
