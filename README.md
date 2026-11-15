@@ -39,7 +39,7 @@ cd frontend && npm install && npm run dev
 Backend (http://localhost:8000, docs at http://localhost:8000/docs):
 
 ```
-cd backend && pip install -r requirements.txt && uvicorn main:app --reload
+cd backend && pip install -r requirements-dev.txt && uvicorn main:app --reload
 ```
 
 For now, the backend returns the files in `frontend/mock/` from every
@@ -57,7 +57,8 @@ with `docker compose` (API + Caddy HTTPS) for the backend and data.
 - **Any change to `CONTRACT.md` needs both teams to agree**, and the mock
   files in `frontend/mock/` must be updated in the same commit.
 - Large data files are never committed. `data/scripts/` must be able to
-  recreate everything in `data/raw/`, `data/processed/` and `data/tiles/`.
+  recreate everything in `data/raw/`, `data/processed/`, `data/tiles/`,
+  `data/terrain/` and `data/waypoints/`.
 
 ## Branches
 

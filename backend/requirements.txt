@@ -1,3 +1,5 @@
+# Direct runtime dependencies. The Docker image installs the pinned closure in
+# requirements.lock; regenerate it after editing this file (see its header).
 fastapi
 uvicorn
 numpy
@@ -5,4 +7,3 @@ rasterio
 pyproj
 scikit-image
 scipy
-pytest
