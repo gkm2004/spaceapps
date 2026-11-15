@@ -1,5 +1,6 @@
 import * as Cesium from 'cesium';
 import { CESIUM_ION_TOKEN, CESIUM_MARS_ASSET_ID } from './config.js';
+import { surfaceHeightAt } from './heights.js';
 
 /**
  * Create the Mars viewer and start loading the Cesium Mars tileset.
@@ -66,6 +67,8 @@ const siteGroundHeights = new Map(); // site id -> Cesium terrain height at the 
  */
 async function siteGroundHeight(viewer, site) {
   if (siteGroundHeights.has(site.id)) return siteGroundHeights.get(site.id);
+  const exact = surfaceHeightAt(site.center[0], site.center[1], { evenIfHidden: true });
+  if (Number.isFinite(exact)) return exact;
   const { scene } = viewer;
   const carto = Cesium.Cartographic.fromDegrees(site.center[0], site.center[1]);
   let done = false;

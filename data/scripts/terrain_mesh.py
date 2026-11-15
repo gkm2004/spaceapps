@@ -338,6 +338,16 @@ def main():
             ],
         },
     }
+    # The same heights as a plain grid (row 0 = north edge, uint16 little-endian), so the
+    # frontend can look a height up by arithmetic instead of sampling the rendered scene.
+    h_min, h_scale = float(np.floor(dem.min())), 0.01
+    quantized = np.round((dem - h_min) / h_scale)
+    assert quantized.max() <= 65535, "height range too large for 16 bits at 1 cm"
+    (out / "heights.bin").write_bytes(quantized.astype("<u2").tobytes())
+    tileset["extras"]["heightmap"] = {
+        "uri": "heights.bin", "rows": int(rows), "cols": int(cols),
+        "bounds": tileset["extras"]["bounds"], "min": h_min, "scale": h_scale,
+    }
     (out / "tileset.json").write_text(json.dumps(tileset))
 
     for level, n, spacing, nverts in counts:

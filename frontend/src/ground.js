@@ -2,6 +2,7 @@
 import * as Cesium from 'cesium';
 import { dangerTileUrl, getDangerTileInfo } from './api.js';
 import { flyToSite } from './globe.js';
+import { surfaceHeightAt } from './heights.js';
 
 const EYE_HEIGHT_M = 1.7;
 const WALK_SPEED_M_S = 1.4;
@@ -30,12 +31,22 @@ export const heavyTilesets = [];
 
 /**
  * Fill in cartographics[i].height with the height of the visible ground.
- * Cesium's global terrain is sampled at full detail (cheap: it is coarse).
- * Heavy tilesets are sampled at whatever detail is already loaded, and win
- * where they are higher, because they are what you see inside a site.
- * Needs frames to make progress in requestRenderMode, so it pumps renders.
+ * Where the local terrain is showing, heights come from its heightmap
+ * (heights.js). Elsewhere Cesium's global terrain is sampled at full detail
+ * (cheap: it is coarse), which needs frames to make progress in
+ * requestRenderMode, so it pumps renders.
  */
 export async function sampleTerrain(scene, cartographics) {
+  // Points on the local terrain: exact heights from the heightmap, no rendering.
+  const unknown = [];
+  for (const c of cartographics) {
+    const h = surfaceHeightAt(Cesium.Math.toDegrees(c.longitude), Cesium.Math.toDegrees(c.latitude));
+    if (Number.isFinite(h)) c.height = h;
+    else unknown.push(c);
+  }
+  if (unknown.length === 0) return cartographics;
+
+  // Everything else: Cesium's global terrain, sampled at full detail.
   let done = false;
   const pump = () => {
     if (done) return;
@@ -44,15 +55,9 @@ export async function sampleTerrain(scene, cartographics) {
   };
   pump();
   try {
-    await scene.sampleHeightMostDetailed(cartographics, heavyTilesets);
+    await scene.sampleHeightMostDetailed(unknown, heavyTilesets);
   } finally {
     done = true;
-  }
-  if (heavyTilesets.some((t) => t.show)) {
-    for (const c of cartographics) {
-      const h = scene.sampleHeight(c);
-      if (Number.isFinite(h) && !(c.height > h)) c.height = h;
-    }
   }
   return cartographics;
 }
@@ -266,7 +271,10 @@ export function initGroundMode(viewer, sites, ui) {
 
   /** Terrain height under the camera; keeps the previous value while tiles are missing. */
   function clampToTerrain() {
-    const h = scene.sampleHeight(new Cesium.Cartographic(pose.lon, pose.lat));
+    // Heightmap lookup when we are on the local terrain (microseconds); otherwise ask the
+    // renderer, which draws off-screen and reads a pixel back (~4 ms, stalls the GPU).
+    const known = surfaceHeightAt(Cesium.Math.toDegrees(pose.lon), Cesium.Math.toDegrees(pose.lat));
+    const h = Number.isFinite(known) ? known : scene.sampleHeight(new Cesium.Cartographic(pose.lon, pose.lat));
     if (!Number.isFinite(h)) return;
     // Ease small changes so 2 m terrain doesn't make the view jitter; snap on big ones (new tiles, teleports).
     const d = h - pose.ground;

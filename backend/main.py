@@ -14,6 +14,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from routing import RouteError, Site
@@ -51,6 +52,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Mars Map API", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+# JSON and terrain tiles compress well (waypoints: 790 KB -> ~10x smaller); images pass through.
+app.add_middleware(GZipMiddleware, minimum_size=2000, compresslevel=5)
 
 
 def parse_lonlat(value: str, name: str):

@@ -4,6 +4,7 @@
 import * as Cesium from 'cesium';
 import { getRoute } from './api.js';
 import { sampleTerrain } from './ground.js';
+import { placeOnGround } from './heights.js';
 
 const ROUTE_COLOR = '#4fc3f7'; // blue: distinct from the green/yellow/red danger layer
 const MAX_LINE_POINTS = 160;
@@ -186,7 +187,7 @@ export function initDirections(viewer, sites, ui) {
   });
 
   const place = (entity, lon, lat) => {
-    entity.position = Cesium.Cartesian3.fromDegrees(lon, lat);
+    placeOnGround(entity, lon, lat);
     entity.show = true;
   };
 

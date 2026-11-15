@@ -2,6 +2,7 @@
 // street-view viewer (pov.js) for stops that have direction-tagged photos.
 import * as Cesium from 'cesium';
 import { getWaypoints } from './api.js';
+import { placeOnGround } from './heights.js';
 import { addLayerCheckbox } from './layers.js';
 import { initPov } from './pov.js';
 
@@ -192,6 +193,7 @@ export function initWaypoints(viewer, sites, ui) {
               distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 300),
             },
           });
+          placeOnGround(stop.entity, lon, lat); // exact height if the heightmap is loaded
           stopByEntity.set(stop.entity, stop);
           stops.push(stop);
         }
@@ -214,5 +216,16 @@ export function initWaypoints(viewer, sites, ui) {
     },
   });
 
-  return { hitTest, isStreetViewOpen: pov.isOpen, nearest, openStreetView, setGroundMode };
+  return {
+    hitTest,
+    isStreetViewOpen: pov.isOpen,
+    nearest,
+    openStreetView,
+    setGroundMode,
+    /** Call when heightmaps arrive: markers switch from terrain clamping to exact heights. */
+    refreshHeights() {
+      for (const stop of stops) placeOnGround(stop.entity, stop.lon, stop.lat);
+      scene.requestRender();
+    },
+  };
 }

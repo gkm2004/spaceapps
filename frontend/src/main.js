@@ -7,6 +7,7 @@ import { initDirections } from './directions.js';
 import * as Cesium from 'cesium';
 import { createGlobe, flyToSite } from './globe.js';
 import { initGroundMode } from './ground.js';
+import { placeOnGround } from './heights.js';
 import { initLayers } from './layers.js';
 import { initSearch } from './search.js';
 import { initLocalTerrain } from './terrain.js';
@@ -66,6 +67,7 @@ const terrainReady = Promise.all([tilesetReady, sitesReady]).then(([mars, sites]
     })
     .then((terrain) => {
       localTerrain = terrain;
+      waypoints?.refreshHeights(); // heightmaps are in: stop clamping markers to the terrain
       return { mars, sites, terrain };
     }));
 
@@ -142,7 +144,7 @@ const hereMarker = viewer.entities.add({
   },
 });
 function showHereMarker(on) {
-  if (on && lastStood) hereMarker.position = Cesium.Cartesian3.fromDegrees(lastStood.lon, lastStood.lat);
+  if (on && lastStood) placeOnGround(hereMarker, lastStood.lon, lastStood.lat);
   hereMarker.show = on && Boolean(lastStood);
   viewer.scene.requestRender();
 }
