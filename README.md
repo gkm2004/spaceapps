@@ -4,6 +4,7 @@
 
 <h1 align="center">Mars Map</h1>
 
+<<<<<<< HEAD
 <p align="center"><strong>A street-level map for the first people to walk on Mars.</strong></p>
 
 <p align="center">
@@ -14,6 +15,13 @@
 <!-- TODO: Live demo: https://... · Demo video: https://... -->
 
 ![Planning a 3.15 km walk across Jezero Crater, with Perseverance's stops shown as orange markers](docs/route-planning.png)
+=======
+Built for the [2026 NASA Space Apps Challenge](https://www.spaceappschallenge.org/): *Interplanetary Survival Guide: Martian Map*.
+* **Demo Video:** [Watch on YouTube](https://youtu.be/ipJbgoSEmvg)
+* **Project Live:** [Try the App](https://zealous-bush-023ba5810.3.azurestaticapps.net)
+<!-- TODO: add a hero screenshot or GIF here, e.g. ![Mars Map](docs/hero.png) -->
+<!-- TODO: Live demo: https://... · Demo video: https://... · Team: ... -->
+>>>>>>> 0ae4d0d022e266f28c9b90f1f763a37d2591a00b
 
 ---
 

@@ -16,6 +16,10 @@ COPY frontend/mock/ frontend/mock/
 ENV DATA_DIR=/data
 VOLUME /data
 
+# rasterio's wheels need libexpat, which python:slim lacks
+RUN apt-get update && apt-get install -y --no-install-recommends libexpat1 \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN useradd --system --no-create-home app
 USER app
 

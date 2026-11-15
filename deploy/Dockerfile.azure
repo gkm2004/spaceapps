@@ -14,10 +14,30 @@ COPY backend/ backend/
 COPY frontend/mock/ frontend/mock/
 
 ENV DATA_DIR=/data
-COPY data/processed/ /data/processed/
+# Data is split into many layers of ~35 MB or less so a registry push can
+# resume after a dropped connection instead of re-sending one ~900 MB layer.
 COPY data/waypoints/ /data/waypoints/
 COPY data/tiles/ /data/tiles/
-COPY data/terrain/ /data/terrain/
+COPY data/processed/gale_cost.npy data/processed/gale_slope.npy /data/processed/
+COPY data/processed/jezero_cost.npy data/processed/jezero_slope.npy /data/processed/
+COPY data/processed/gale_dem.tif data/processed/gale_dem_1m.tif data/processed/gale_grid.json /data/processed/
+COPY data/processed/jezero_dem.tif data/processed/jezero_dem_1m.tif data/processed/jezero_grid.json /data/processed/
+
+COPY data/terrain/gale/tileset.json data/terrain/gale/heights.bin data/terrain/gale/L0_* data/terrain/gale/L1_* data/terrain/gale/L2_* /data/terrain/gale/
+COPY data/terrain/gale/L3_0_* data/terrain/gale/L3_1_* data/terrain/gale/L3_2_* /data/terrain/gale/
+COPY data/terrain/gale/L3_3_* data/terrain/gale/L3_4_* data/terrain/gale/L3_5_* /data/terrain/gale/
+COPY data/terrain/gale/L3_6_* data/terrain/gale/L3_7_* data/terrain/gale/L3_8_* /data/terrain/gale/
+COPY data/terrain/gale/L3_9_* data/terrain/gale/L3_10_* data/terrain/gale/L3_11_* /data/terrain/gale/
+
+COPY data/terrain/jezero/tileset.json data/terrain/jezero/heights.bin data/terrain/jezero/L0_* data/terrain/jezero/L1_* data/terrain/jezero/L2_* /data/terrain/jezero/
+COPY data/terrain/jezero/L3_0_* data/terrain/jezero/L3_1_* data/terrain/jezero/L3_2_* /data/terrain/jezero/
+COPY data/terrain/jezero/L3_3_* data/terrain/jezero/L3_4_* data/terrain/jezero/L3_5_* /data/terrain/jezero/
+COPY data/terrain/jezero/L3_6_* data/terrain/jezero/L3_7_* data/terrain/jezero/L3_8_* /data/terrain/jezero/
+COPY data/terrain/jezero/L3_9_* data/terrain/jezero/L3_10_* data/terrain/jezero/L3_11_* /data/terrain/jezero/
+
+# rasterio's wheels need libexpat, which python:slim lacks
+RUN apt-get update && apt-get install -y --no-install-recommends libexpat1 \
+    && rm -rf /var/lib/apt/lists/*
 
 RUN useradd --system --no-create-home app
 USER app
