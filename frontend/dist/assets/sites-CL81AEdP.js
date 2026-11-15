@@ -1,1 +1,0 @@
-var e=[{id:`jezero`,name:`Jezero Crater`,center:[77.4509,18.4446],bbox:[77.424224,18.419293,77.477576,18.469904]}];export{e as default};

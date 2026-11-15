@@ -8,3 +8,6 @@ data/processed/
 *.npy
 data/terrain/
 data/tiles/*/
+frontend/dist/
+venv/
+.pytest_cache/
