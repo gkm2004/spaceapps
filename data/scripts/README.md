@@ -26,7 +26,7 @@ python data/scripts/terrain_mesh.py --site jezero
 | `slope.py` | `data/processed/{site}_slope.npy`, `{site}_cost.npy`, `{site}_grid.json` (transform + CRS) |
 | `danger_tiles.py` | `data/tiles/{site}/danger/{z}/{x}/{y}.png` + `tiles.json` |
 | `terrain_mesh.py` | `data/terrain/{site}/tileset.json` + `.glb` tiles: the DEM as a 3D Tiles terrain model, 2 m mesh, shaded-relief colour |
-| `waypoints.py` | `data/waypoints/{site}.json`: rover stops inside the site bbox, each with 3-6 photos (small, committed) |
+| `waypoints.py` | `data/waypoints/{site}.json`: rover stops inside the site bbox, each with 3-6 photos (gitignored, uploaded with the rest of `data/`) |
 
 Source DEM for Jezero:
 `JEZ_hirise_soc_006_DTM_MOLAtopography_DeltaGeoid_1m_Eqc_latTs0_lon0_blend40.tif`

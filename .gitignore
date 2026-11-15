@@ -8,6 +8,7 @@ data/processed/
 *.npy
 data/terrain/
 data/tiles/*/
+data/waypoints/
 frontend/dist/
 venv/
 .pytest_cache/
