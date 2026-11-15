@@ -39,8 +39,7 @@ body {
 }
 
 #sites {
-  top: 16px;
-  left: 16px;
+  align-self: flex-start; /* keep its own width inside the left column */
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -154,8 +153,6 @@ body {
 
 /* Layers */
 #layers {
-  top: 16px;
-  right: 16px;
   min-width: 150px;
 }
 
@@ -200,14 +197,6 @@ body {
   bottom: 64px;
 }
 
-@media (max-width: 720px) {
-  #sites {
-    top: 72px;
-  }
-  #layers {
-    top: 72px;
-  }
-}
 
 /* Cursor coordinates */
 #coords {
@@ -377,12 +366,8 @@ body {
 
 /* Rover stop photo panel */
 #photo-panel {
-  top: 150px;
-  right: 16px;
   width: 276px;
-  max-height: calc(100% - 420px);
   min-height: 160px;
-  overflow-y: auto;
 }
 
 #photo-panel header {
@@ -478,7 +463,7 @@ body {
   opacity: 0.8;
 }
 
-/* Street view */
+/* Mars view */
 #pov {
   position: fixed;
   inset: 0;
@@ -592,7 +577,7 @@ body {
   opacity: 1;
 }
 
-/* Street view: zoom-and-fade when moving between stops */
+/* Mars view: zoom-and-fade when moving between stops */
 #pov .stage {
   transition: transform 0.26s ease-in, opacity 0.26s ease-in;
 }
@@ -618,19 +603,23 @@ body {
   }
 }
 
-/* Left column: directions, route card and rover-stop panel stack instead of overlapping */
+/* Left column: sites, directions and route card stack instead of overlapping */
 #left-stack {
   position: absolute;
-  top: 110px;
+  top: 16px;
   left: 16px;
   width: 288px;
-  max-height: calc(100% - 110px - 110px);
+  max-height: calc(100% - 16px - 56px);
   display: flex;
   flex-direction: column;
   gap: 10px;
-  overflow-y: auto;
+  overflow-y: auto; /* last resort on very short windows; the scrollbar stays hidden */
   pointer-events: none; /* the gaps let clicks through to the globe */
-  scrollbar-width: thin;
+  scrollbar-width: none;
+}
+
+#left-stack::-webkit-scrollbar {
+  display: none;
 }
 
 #left-stack > .panel {
@@ -647,14 +636,63 @@ body {
   display: none;
 }
 
+/* Top right: rover-stop panel sits at the top, left of the layers panel,
+   which keeps it clear of the ground HUD in the bottom-right corner. */
+#right-stack {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 10px;
+  pointer-events: none; /* the gaps let clicks through to the globe */
+}
+
+#right-stack > .panel {
+  position: static;
+  box-sizing: border-box;
+  flex: none;
+  pointer-events: auto;
+}
+
+#right-stack > .panel[hidden] {
+  display: none;
+}
+
+/* Narrower windows: the row would run into the centred search bar, so the stop
+   panel drops below the layers panel. While walking, the ground HUD (196px wide
+   + 10px gap) owns the right edge, so the stop panel steps left beside it. */
+@media (max-width: 1340px) {
+  #right-stack {
+    flex-direction: column;
+    align-items: flex-end;
+  }
+  #right-stack > #photo-panel {
+    order: 1;
+  }
+  body:has(#ground-hud:not([hidden])) #photo-panel {
+    margin-right: 206px;
+  }
+}
+
+@media (max-width: 720px) {
+  #left-stack,
+  #right-stack {
+    top: 72px;
+  }
+  #left-stack {
+    max-height: calc(100% - 72px - 56px);
+  }
+}
+
 /* Directions bar */
 #directions-bar .leg {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 8px;
-  margin: 0;
+  margin: 0 0 6px;
   font-size: 13px;
-  line-height: 1.35;
 }
 
 #directions-bar .pin {
@@ -670,18 +708,66 @@ body {
   text-align: center;
 }
 
-#directions-bar .leg-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin: 6px 0 8px 26px;
-}
-
-#directions-bar .leg-actions button {
+#directions-bar input {
+  flex: 1;
+  min-width: 0;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--panel-fg);
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 6px 8px;
+  font: inherit;
   font-size: 12px;
-  padding: 4px 8px;
+  font-variant-numeric: tabular-nums;
+  outline: none;
 }
 
-#directions-bar .leg-actions button[hidden] {
-  display: none;
+#directions-bar input::placeholder {
+  color: rgba(243, 233, 226, 0.5);
+}
+
+/* the box the next map click fills */
+#directions-bar input.active,
+#directions-bar input:focus {
+  border-color: var(--accent);
+}
+
+/* travel mode: on foot / robotic rover / pressurized rover */
+#directions-bar .modes {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+  margin: 8px 0 6px;
+}
+
+#directions-bar .modes button {
+  font-size: 12px;
+  line-height: 1.2;
+  padding: 5px 4px;
+}
+
+#directions-bar .limits {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+}
+
+#directions-bar .limits label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+#directions-bar .limits input {
+  flex: none;
+  width: 54px;
+  padding: 4px 6px;
+}
+
+#directions-bar .hint {
+  margin: 2px 0 0 26px;
+  font-size: 12px;
+  line-height: 1.35;
+  opacity: 0.7;
 }

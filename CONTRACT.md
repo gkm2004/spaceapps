@@ -5,7 +5,10 @@ GET /api/sites
   -> [{ id, name, center: [lon, lat], bbox: [west, south, east, north] }]
      bbox = the zone where ground view is unlocked
 
-GET /api/route?site=ID&start=LON,LAT&end=LON,LAT
+GET /api/route?site=ID&start=LON,LAT&end=LON,LAT[&speed=M_S][&max_slope=DEG]
+  speed, max_slope: optional, for vehicles. speed = flat-ground speed in m/s
+  (default 0.8, walking); max_slope = steepest slope allowed in degrees
+  (default 25, walking; max 45). Omit both for a walking route.
   -> GeoJSON Feature, LineString of [lon, lat, height]
      properties: { distance_m, ascent_m, est_minutes, max_slope_deg,
                    profile: [[dist_m, height_m], ...] }

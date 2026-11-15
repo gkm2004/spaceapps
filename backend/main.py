@@ -96,12 +96,14 @@ def get_route(
     site: str = Query(..., description="Site id from /api/sites"),
     start: str = Query(..., description="LON,LAT"),
     end: str = Query(..., description="LON,LAT"),
+    speed: float | None = Query(None, gt=0, le=50, description="Flat-ground speed in m/s (default: walking, 0.8)"),
+    max_slope: float | None = Query(None, gt=0, le=45, description="Steepest slope allowed, degrees (default: walking, 25)"),
 ):
     start_ll, end_ll = parse_lonlat(start, "start"), parse_lonlat(end, "end")
     if not sites:
         return load_json(MOCK / "route.json")
     try:
-        return get_site(site).route(start_ll, end_ll)
+        return get_site(site).route(start_ll, end_ll, speed, max_slope)
     except RouteError as exc:
         raise HTTPException(422, str(exc))
 

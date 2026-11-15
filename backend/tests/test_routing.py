@@ -13,7 +13,7 @@ import numpy as np
 import pytest
 
 from routing import (FLAT_SPEED_M_S, MIN_WINDOW_MARGIN_CELLS, PROFILE_STEP_M, RouteError, Site,
-                     compute_route, compute_route_windowed)
+                     compute_route, compute_route_windowed, cost_for_slope)
 
 CELL = (2.0, 2.0)
 PROCESSED = Path(__file__).resolve().parents[2] / "data" / "processed"
@@ -138,6 +138,51 @@ def test_route_avoids_a_steep_band_when_the_detour_is_cheaper():
     assert (cost[r.cells[:, 0], r.cells[:, 1]] == 1.0).all()
 
 
+# -- vehicles: speed and slope limit ---------------------------------------------
+
+def test_speed_only_changes_the_time():
+    cost, slope, dem = flat()
+    walk = compute_route(cost, slope, dem, CELL, (10, 10), (80, 150))
+    fast = compute_route(cost, slope, dem, CELL, (10, 10), (80, 150), speed_m_s=FLAT_SPEED_M_S * 4)
+    assert (fast.cells == walk.cells).all()
+    assert fast.est_minutes == pytest.approx(walk.est_minutes / 4)
+
+
+def test_cost_for_slope_matches_the_walking_limit():
+    slope = np.array([0.0, 10.0, 24.9, 25.0, 25.1, 40.0, np.nan], np.float32)
+    cost = cost_for_slope(slope, 25.0)
+    assert cost[0] == pytest.approx(1.0)
+    assert np.isfinite(cost[:4]).all() and np.isinf(cost[4:]).all()
+    assert np.isinf(cost_for_slope(slope, 20.0)[2])
+    assert np.isfinite(cost_for_slope(slope, 45.0)[5])
+
+
+def ridge():
+    """Flat ground with a 28 degree ridge right across it: too steep to walk, fine for a rover."""
+    _, slope, dem = big_flat((200, 400))
+    slope[:, 195:205] = 28.0
+    return cost_for_slope(slope, 25.0), slope, dem
+
+
+def test_slope_limit_opens_and_closes_a_ridge():
+    cost, slope, dem = ridge()
+    with pytest.raises(RouteError, match="No walkable route"):
+        compute_route_windowed(cost, slope, dem, CELL, (100, 20), (100, 380))
+    r = compute_route_windowed(cost, slope, dem, CELL, (100, 20), (100, 380), max_slope_deg=30.0)
+    assert r.max_slope_deg == pytest.approx(28.0)
+
+
+def test_lower_slope_limit_takes_the_detour():
+    cost, slope, dem = flat((120, 200))
+    slope[20:120, 95:105] = 15.0  # a 15 degree band with a flat gap at the top
+    cost = cost_for_slope(slope, 25.0)
+    walk = compute_route_windowed(cost, slope, dem, CELL, (100, 20), (100, 180))
+    assert walk.max_slope_deg == pytest.approx(15.0)  # walkers climb straight over
+    rover = compute_route_windowed(cost, slope, dem, CELL, (100, 20), (100, 180), max_slope_deg=10.0)
+    assert rover.max_slope_deg == 0.0  # the vehicle goes round through the gap
+    assert rover.distance_m > walk.distance_m
+
+
 # -- windowed search (large sites) ----------------------------------------------
 
 def big_flat(shape=(900, 1200)):
@@ -243,3 +288,11 @@ def test_real_route_matches_contract_and_avoids_impassable(jezero):
     assert p["max_slope_deg"] <= 25.0
     assert p["est_minutes"] >= p["distance_m"] / FLAT_SPEED_M_S / 60 - 0.1  # never faster than flat
     assert p["profile"][-1][0] == pytest.approx(p["distance_m"], abs=0.1)
+
+
+def test_real_vehicle_route_respects_its_slope_limit_and_speed(jezero):
+    start, end = (77.4509, 18.4446), (77.4350, 18.4600)
+    walk = jezero.route(start, end)["properties"]
+    rover = jezero.route(start, end, speed_m_s=2.8, max_slope_deg=15.0)["properties"]
+    assert rover["max_slope_deg"] <= 15.0
+    assert rover["est_minutes"] < walk["est_minutes"]

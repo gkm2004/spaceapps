@@ -1,4 +1,4 @@
-// Street-view style viewer for rover stops.
+// Mars view: a street-view style viewer for rover stops.
 // Every photo taken at a stop is laid out by the compass direction it faces
 // (az/el/hfov/vfov from /api/waypoints `pov`), so dragging pans across them.
 // Plain <img> elements: NASA's image server sends no CORS headers, so the

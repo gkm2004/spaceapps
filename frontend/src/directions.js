@@ -1,6 +1,6 @@
-// Directions: route from your current location (or a picked start) to a clicked
-// destination. Fetches /api/route, draws it on the terrain, and shows a route
-// card with stats and an elevation profile.
+// Navigation: a route from A to B, on foot or by rover. A and B are filled by clicking
+// the map or typing "lon, lat" into the panel's boxes. Fetches /api/route, draws it on
+// the terrain, and shows a route card with stats and an elevation profile.
 import * as Cesium from 'cesium';
 import { getRoute } from './api.js';
 import { sampleTerrain } from './ground.js';
@@ -9,6 +9,21 @@ import { placeOnGround } from './heights.js';
 const ROUTE_COLOR = '#4fc3f7'; // blue: distinct from the green/yellow/red danger layer
 const MAX_LINE_POINTS = 160;
 const LINE_LIFT_M = 0.6;
+const LOOK_AHEAD_M = 25; // a walk starting at A faces this far down the route
+
+/**
+ * Travel modes: flat-ground speed (m/s) and the steepest slope (degrees) each can handle.
+ * The user can change both per route. Slope slows every mode the same way (backend cost model).
+ */
+const MODES = {
+  // backend defaults: 0.8 m/s and the 25 degree limit baked into the walking cost grid
+  walk: { speed: 0.8, maxSlope: 25 },
+  // Perseverance: about 152 m/h top speed on flat, hard ground; drivers avoid tilts over 30 degrees
+  rover: { speed: 0.042, maxSlope: 30 },
+  // planned crewed vehicle (NASA/JAXA pressurized rover); no published Mars spec, so an
+  // estimate: about 10 km/h, and 20 degrees like typical crewed-rover design targets
+  crewed: { speed: 2.8, maxSlope: 20 },
+};
 const DEFAULT_OFFSET_M = -74; // Cesium terrain vs DEM heights at Jezero, if nothing better is known
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
@@ -119,25 +134,33 @@ function renderProfile(container, readout, profile, onHover) {
  * @param sites entries from /api/sites
  * @param ui {
  *   button, bar, card, error(msg),
- *   currentLocation(): { site, lon, lat, label } | null   where "you" are right now
+ *   currentLocation(): { site, lon, lat, label } | null   pre-fills A when navigation starts
  *   terrainOffset?(site): number | null
  * }
- * @returns { isActive() }
+ * @returns { isActive(), startPoint() }
  */
 export function initDirections(viewer, sites, ui) {
   const { scene } = viewer;
   const cardEl = (role) => ui.card.querySelector(`[data-role="${role}"]`);
   const barEl = (role) => ui.bar.querySelector(`[data-role="${role}"]`);
 
-  // 'off'     directions closed
-  // 'start'   waiting for a click to set the start
-  // 'end'     start is set, waiting for a click to set the destination
+  // 'off'     navigation ended
+  // 'pick'    waiting for A and/or B (map click or typed)
   // 'loading' route requested
-  // 'shown'   route on screen; a click picks a new destination from the same start
+  // 'shown'   route on screen; a map click picks a new B (or a new A if its box is selected)
   let state = 'off';
-  let start = null; // { site, lon, lat, label }
+  let start = null; // A: { site, lon, lat, label }
+  let end = null; // B: { lon, lat }
+  let field = 'a'; // the box the next map click fills
   let requestId = 0;
   let line = null; // { positions: Cartesian3[], cumulative: number[] }
+  const inputA = barEl('a');
+  const inputB = barEl('b');
+  const inputSpeed = barEl('speed');
+  const inputSlope = barEl('max-slope');
+  const modeButtons = [...ui.bar.querySelectorAll('[data-mode]')];
+  let travel = { mode: 'walk', ...MODES.walk }; // speed in m/s, maxSlope in degrees
+  const fmtLonLat = (p) => `${p.lon.toFixed(5)}, ${p.lat.toFixed(5)}`;
 
   const pin = (label, css) => viewer.entities.add({
     show: false,
@@ -212,21 +235,18 @@ export function initDirections(viewer, sites, ui) {
     const on = state !== 'off';
     ui.button.setAttribute('aria-pressed', String(on));
     ui.button.classList.toggle('active', on);
+    ui.button.textContent = on ? 'End navigation' : 'Start navigation';
     ui.bar.hidden = !on;
-    scene.canvas.style.cursor = state === 'start' || state === 'end' || state === 'shown' ? 'crosshair' : '';
-    barEl('from').textContent = state === 'start' ? 'click the start on the map' : (start?.label ?? '');
-    barEl('to').textContent = {
-      off: '',
-      start: 'To: pick the start first',
-      end: 'To: click your destination on the map',
-      loading: 'Finding the easiest walking route…',
-      shown: 'To: the point you picked. Click the map for a new destination.',
-    }[state];
-    barEl('pick-start').hidden = state === 'start';
-    // "Use my location" only when there is one and it isn't already the start
-    const here = ui.currentLocation();
-    barEl('use-current').hidden = !here || (state !== 'start' && start?.label === here.label
-      && Math.abs(start.lon - here.lon) < 1e-6 && Math.abs(start.lat - here.lat) < 1e-6);
+    scene.canvas.style.cursor = on && state !== 'loading' ? 'crosshair' : '';
+    inputA.classList.toggle('active', on && field === 'a');
+    inputB.classList.toggle('active', on && field === 'b');
+    barEl('hint').textContent = state === 'loading'
+      ? 'Finding the easiest route…'
+      : field === 'a'
+        ? 'Click the map to set the start (A), or type lon, lat.'
+        : state === 'shown'
+          ? 'Click the map for a new destination, or select A to move the start.'
+          : 'Click the map to set the destination (B), or type lon, lat.';
     scene.requestRender();
   }
 
@@ -288,13 +308,14 @@ export function initDirections(viewer, sites, ui) {
     ui.card.hidden = false;
   }
 
-  async function requestRoute(end) {
+  async function requestRoute() {
     clearRoute();
     place(pinB, end.lon, end.lat);
     const id = requestId;
     setState('loading');
     try {
-      const route = await getRoute(start.site.id, [start.lon, start.lat], [end.lon, end.lat]);
+      const route = await getRoute(start.site.id, [start.lon, start.lat], [end.lon, end.lat],
+        { speed: travel.speed, maxSlope: travel.maxSlope });
       const draped = await drapeRoute(route.geometry.coordinates);
       if (id !== requestId) return; // cancelled or superseded
       line = draped;
@@ -309,27 +330,91 @@ export function initDirections(viewer, sites, ui) {
       if (id !== requestId) return;
       console.error(err);
       clearRoute();
+      setB(null);
       ui.error(`No route: ${err.message ?? err}`);
-      setState('end');
+      setState('pick');
     }
     scene.requestRender();
   }
 
-  /** Start from where the user is, if that is known; otherwise ask for a click. */
-  function useCurrentLocation() {
-    const here = ui.currentLocation();
-    if (here) {
-      setStart(here);
-      setState('end');
-    } else {
-      setStart(null);
-      setState('start');
+  /** Set (or clear, with null) A, then route if B is already set. */
+  function setA(point) {
+    setStart(point);
+    inputA.value = point ? fmtLonLat(point) : '';
+    if (point && end && !inBbox(point.site, end.lon, end.lat)) setB(null); // B is in another site
+    field = point ? 'b' : 'a';
+    if (point && end) requestRoute();
+    else setState('pick');
+  }
+
+  /** Set (or clear) B. Routing is up to the caller. */
+  function setB(point) {
+    end = point;
+    inputB.value = point ? fmtLonLat(point) : '';
+    if (!point) pinB.show = false;
+  }
+
+  /** Fill box `which` ('a' | 'b') with a point, from a map click or typed coordinates. */
+  function pickPoint(which, lon, lat, label) {
+    if (which === 'a') {
+      const site = sites.find((s) => inBbox(s, lon, lat));
+      if (!site) {
+        ui.error('The start must be inside a site zone (the orange outline).');
+        return false;
+      }
+      setA({ site, lon, lat, label });
+      return true;
     }
+    if (!start) {
+      ui.error('Set the start (A) first.');
+      field = 'a';
+      setState('pick');
+      return false;
+    }
+    if (!inBbox(start.site, lon, lat)) {
+      ui.error(`The destination must be inside the ${start.site.name} zone (the orange outline).`);
+      return false;
+    }
+    setB({ lon, lat });
+    requestRoute();
+    return true;
+  }
+
+  /** Show the travel settings; re-route when they change and a route is wanted. */
+  function showTravel() {
+    for (const b of modeButtons) {
+      const on = b.dataset.mode === travel.mode;
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-pressed', String(on));
+    }
+    const kmh = travel.speed * 3.6;
+    inputSpeed.value = String(Number(kmh.toFixed(kmh < 1 ? 2 : 1)));
+    inputSlope.value = String(travel.maxSlope);
+  }
+
+  function setTravel(next) {
+    travel = { ...travel, ...next };
+    showTravel();
+    if (start && end && state !== 'off') requestRoute();
+  }
+
+  function begin() {
+    setB(null);
+    // walking: start from where you stand; on the map, A is yours to pick
+    setA(ui.currentLocation());
+  }
+
+  function finish() {
+    setB(null);
+    setStart(null);
+    inputA.value = '';
+    field = 'a';
+    setState('off');
   }
 
   const handler = new Cesium.ScreenSpaceEventHandler(scene.canvas);
   handler.setInputAction((click) => {
-    if (state !== 'start' && state !== 'end' && state !== 'shown') return;
+    if (state === 'off' || state === 'loading') return;
     if (!scene.pickPositionSupported) return;
     const cartesian = scene.pickPosition(click.position);
     if (!Cesium.defined(cartesian)) return;
@@ -337,40 +422,95 @@ export function initDirections(viewer, sites, ui) {
     const lon = Cesium.Math.toDegrees(c.longitude);
     const lat = Cesium.Math.toDegrees(c.latitude);
 
-    if (state === 'start') {
-      const site = sites.find((s) => inBbox(s, lon, lat));
-      if (!site) {
-        ui.error('Routes only work inside a site zone (the orange outline).');
-        return;
-      }
-      setStart({ site, lon, lat, label: 'the point you picked' });
-      setState('end');
-    } else {
-      if (!inBbox(start.site, lon, lat)) {
-        ui.error(`The destination must be inside the ${start.site.name} zone (the orange outline).`);
-        return;
-      }
-      requestRoute({ lon, lat });
-    }
+    pickPoint(field, lon, lat, 'the point you picked');
   }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
 
-  ui.button.addEventListener('click', () => {
-    if (state === 'off') {
-      useCurrentLocation();
-    } else {
-      setStart(null);
-      setState('off');
+  // Typed coordinates: "lon, lat" (comma or space separated). Committed on Enter or leaving the box.
+  for (const [which, input] of [['a', inputA], ['b', inputB]]) {
+    input.addEventListener('focus', () => {
+      field = which;
+      setState(state);
+    });
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') input.blur(); // blur fires 'change'
+    });
+    input.addEventListener('change', () => {
+      const text = input.value.trim();
+      if (!text) {
+        if (which === 'a') {
+          setA(null);
+        } else {
+          clearRoute();
+          setB(null);
+          field = 'b';
+          setState('pick');
+        }
+        return;
+      }
+      const m = text.match(/^(-?\d+(?:\.\d+)?)\s*[,\s]\s*(-?\d+(?:\.\d+)?)$/);
+      if (!m) ui.error('Type coordinates as lon, lat, for example 77.45, 18.44.');
+      const ok = Boolean(m) && pickPoint(which, Number(m[1]), Number(m[2]), 'typed coordinates');
+      if (!ok) {
+        // put back the point that is actually set
+        const current = which === 'a' ? start : end;
+        input.value = current ? fmtLonLat(current) : '';
+      }
+    });
+  }
+
+  // Travel mode presets, and hand-tuned speed / slope limit
+  for (const b of modeButtons) {
+    b.addEventListener('click', () => setTravel({ mode: b.dataset.mode, ...MODES[b.dataset.mode] }));
+  }
+  inputSpeed.addEventListener('change', () => {
+    const kmh = Number(inputSpeed.value);
+    if (kmh > 0 && kmh <= 180) setTravel({ speed: kmh / 3.6 });
+    else {
+      ui.error('Speed must be above 0 and at most 180 km/h.');
+      showTravel();
     }
   });
-  barEl('pick-start').addEventListener('click', () => {
-    setStart(null);
-    setState('start');
+  inputSlope.addEventListener('change', () => {
+    const deg = Math.round(Number(inputSlope.value));
+    if (deg >= 1 && deg <= 45) setTravel({ maxSlope: deg });
+    else {
+      ui.error('Max slope must be between 1 and 45 degrees.');
+      showTravel();
+    }
   });
-  barEl('use-current').addEventListener('click', useCurrentLocation);
+  for (const input of [inputSpeed, inputSlope]) {
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') input.blur(); // blur fires 'change'
+    });
+  }
+  showTravel();
+
+  ui.button.addEventListener('click', () => (state === 'off' ? begin() : finish()));
   cardEl('close').addEventListener('click', () => {
     clearRoute();
-    if (state !== 'off') setState(start ? 'end' : 'start');
+    setB(null);
+    field = 'b';
+    if (state !== 'off') setState('pick');
   });
 
-  return { isActive: () => state !== 'off' };
+  return {
+    isActive: () => state !== 'off',
+    /**
+     * Point A, for starting a walk there: { site, lon, lat, toward } or null when no start is set.
+     * With a route on screen, A is the route's (possibly snapped) first point and `toward` is
+     * a point a few metres along it, so the walker faces down the route; otherwise toward is null.
+     */
+    startPoint() {
+      if (state === 'off' || !start) return null;
+      if (!line) return { site: start.site, lon: start.lon, lat: start.lat, toward: null };
+      const total = line.cumulative[line.cumulative.length - 1];
+      let toward = null;
+      if (total > 0) {
+        const c = Cesium.Cartographic.fromCartesian(positionAlong(Math.min(1, LOOK_AHEAD_M / total)));
+        toward = [Cesium.Math.toDegrees(c.longitude), Cesium.Math.toDegrees(c.latitude)];
+      }
+      const [lon, lat] = line.ends[0];
+      return { site: start.site, lon, lat, toward };
+    },
+  };
 }

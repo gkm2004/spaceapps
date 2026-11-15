@@ -95,6 +95,7 @@ document.getElementById('map-view').addEventListener('click', () => {
 
 // Step 4: ground mode (outlines need the tileset loaded to sit on the terrain)
 let ground = null;
+const groundViewButton = document.getElementById('ground-view');
 terrainReady
   .then(({ sites }) => {
     ground = initGroundMode(viewer, sites, {
@@ -103,6 +104,7 @@ terrainReady
       exitButton: document.getElementById('exit-ground'),
       haze: document.getElementById('sky-haze'),
       onModeChange: (isGround) => {
+        groundViewButton.classList.toggle('active', isGround);
         waypoints?.setGroundMode(isGround);
         showHereMarker(!isGround);
         if (!isGround) stopPrompt.hidden = true;
@@ -114,7 +116,7 @@ terrainReady
       // while Directions is on, clicks pick route points instead of descending
       // ...and a click on a rover marker opens its photos
       isClickCaptured: (click) => Boolean(directions?.isActive() || waypoints?.hitTest(click.position)),
-      isKeyboardCaptured: () => waypoints?.isStreetViewOpen() ?? false,
+      isKeyboardCaptured: () => waypoints?.isMarsViewOpen() ?? false,
     });
   })
   .catch(() => {});
@@ -152,38 +154,14 @@ function showHereMarker(on) {
   viewer.scene.requestRender();
 }
 
-// Step 5: directions
+// Step 5: navigation (walking route from A to B)
 let directions = null;
 let errorTimer = null;
 sitesReady.then((sites) => {
-  /**
-   * The default start for a route, best guess first:
-   * 1. where you are standing (ground mode)
-   * 2. where you last stood (map view, after a walk)
-   * 3. the centre of the view, if it is inside a site
-   * 4. the centre of the nearest site, if the camera is within 60 km of it
-   */
+  /** Pre-fill for A when navigation starts: where you stand in ground view. On the map, A is picked. */
   function currentLocation() {
     const standing = ground?.position();
-    if (standing) return { site: standing.site, lon: standing.lon, lat: standing.lat, label: 'your position' };
-    if (lastStood) return { ...lastStood, label: 'where you last stood' };
-    const centre = screenCenterPosition(viewer);
-    if (centre) {
-      const c = Cesium.Cartographic.fromCartesian(centre);
-      const lon = Cesium.Math.toDegrees(c.longitude);
-      const lat = Cesium.Math.toDegrees(c.latitude);
-      const site = sites.find((s) => lon >= s.bbox[0] && lon <= s.bbox[2] && lat >= s.bbox[1] && lat <= s.bbox[3]);
-      if (site) return { site, lon, lat, label: 'the centre of your view' };
-    }
-    // 4. looking at a site from outside it: its centre (for Jezero, the landing site)
-    const camera = viewer.camera.positionWC;
-    const near = sites
-      .map((site) => ({ site, d: Cesium.Cartesian3.distance(camera, Cesium.Cartesian3.fromDegrees(site.center[0], site.center[1])) }))
-      .sort((a, b) => a.d - b.d)[0];
-    if (near && near.d < 60_000) {
-      return { site: near.site, lon: near.site.center[0], lat: near.site.center[1], label: `the centre of ${near.site.name}` };
-    }
-    return null;
+    return standing ? { site: standing.site, lon: standing.lon, lat: standing.lat, label: 'your position' } : null;
   }
 
   directions = initDirections(viewer, sites, {
@@ -200,7 +178,43 @@ sitesReady.then((sites) => {
   });
 });
 
-// Step 6: rover waypoints, photos and street view
+// Ground view button: plan on the map, then walk it.
+// Starts at the route's point A (facing down the route) when Directions has one;
+// otherwise in the middle of the site in view (or the nearest site).
+sitesReady.then((sites) => {
+  function siteInView() {
+    const centre = screenCenterPosition(viewer);
+    if (centre) {
+      const c = Cesium.Cartographic.fromCartesian(centre);
+      const lon = Cesium.Math.toDegrees(c.longitude);
+      const lat = Cesium.Math.toDegrees(c.latitude);
+      const site = sites.find((s) => lon >= s.bbox[0] && lon <= s.bbox[2] && lat >= s.bbox[1] && lat <= s.bbox[3]);
+      if (site) return site;
+    }
+    const camera = viewer.camera.positionWC;
+    return sites
+      .map((site) => ({ site, d: Cesium.Cartesian3.distance(camera, Cesium.Cartesian3.fromDegrees(site.center[0], site.center[1])) }))
+      .sort((a, b) => a.d - b.d)[0]?.site ?? null;
+  }
+
+  groundViewButton.addEventListener('click', () => {
+    if (!ground) {
+      showError('Ground view is still loading the terrain. Try again in a moment.');
+      return;
+    }
+    const a = directions?.startPoint();
+    if (a) {
+      ground.enterAt(a.site, a.lon, a.lat, a.toward);
+      return;
+    }
+    const site = siteInView();
+    if (!site) return;
+    const [w, s, e, n] = site.bbox;
+    ground.enterAt(site, (w + e) / 2, (s + n) / 2);
+  });
+});
+
+// Step 6: rover waypoints, photos and Mars view
 let waypoints = null;
 sitesReady.then((sites) => {
   waypoints = initWaypoints(viewer, sites, {
@@ -209,13 +223,13 @@ sitesReady.then((sites) => {
     pov: document.getElementById('pov'),
     isBlocked: () => directions?.isActive() ?? false,
     // opened from the photo panel while walking: come back to the ground afterwards
-    streetViewOptions: () => (ground?.position() ? { onClose: returnToGround } : {}),
+    marsViewOptions: () => (ground?.position() ? { onClose: returnToGround } : {}),
     error: showError,
   });
 });
 
 // Ground mode <-> rover photos: point the walker at the nearest rover stop,
-// and offer street view when standing where the rover stood.
+// and offer Mars view when standing where the rover stood.
 const AT_STOP_M = 20;
 const NEARBY_M = 1500;
 const COMPASS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
@@ -251,7 +265,7 @@ function updateStopPrompt(pose) {
 stopPromptAction.addEventListener('click', () => {
   if (!promptTarget) return;
   const { stop, atStop, heading } = promptTarget;
-  if (atStop) waypoints.openStreetView(stop, { heading, onClose: returnToGround });
+  if (atStop) waypoints.openMarsView(stop, { heading, onClose: returnToGround });
   else ground.glideTo(stop.lon, stop.lat);
 });
 

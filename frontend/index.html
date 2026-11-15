@@ -22,10 +22,18 @@
       <ul id="search-results" role="listbox" hidden></ul>
     </div>
 
-    <div id="sites" class="panel" aria-label="Sites">
-      <h2>Fly to site</h2>
+    <!-- Top right: rover-stop panel beside the layers panel -->
+    <div id="right-stack">
+    <div id="photo-panel" class="panel" aria-label="Rover stop" hidden>
+      <header>
+        <h2 data-role="title"></h2>
+        <button data-role="close" aria-label="Close photo panel">×</button>
+      </header>
+      <p class="where" data-role="where"></p>
+      <button class="primary" data-role="mars-view">Mars view</button>
+      <div class="thumbs" data-role="thumbs"></div>
+      <p class="where" data-role="empty" hidden>No photos for this stop.</p>
     </div>
-
     <div id="layers" class="panel" aria-label="Layers">
       <h2>Layers</h2>
       <div id="layer-list"></div>
@@ -35,22 +43,39 @@
         <li><span class="swatch" style="background: #e61e1e"></span>Over 20°</li>
       </ul>
     </div>
+    </div>
 
     <div id="toolbar" class="panel">
       <button id="map-view" title="Top-down, north-up view of the current location">Map view</button>
-      <button id="directions" aria-pressed="false" title="Plan a walking route between two points">Directions</button>
+      <button id="ground-view" title="Walk on the surface: starts at your navigation start (A), or the middle of the site">Ground view</button>
+      <button id="directions" aria-pressed="false" title="Plan a route between two points, on foot or by rover">Start navigation</button>
     </div>
 
     <!-- Left column: panels stack here instead of overlapping -->
     <div id="left-stack">
-    <div id="directions-bar" class="panel" aria-label="Directions" hidden>
-      <h2>Directions</h2>
-      <p class="leg"><span class="pin">A</span><span>From <strong data-role="from"></strong></span></p>
-      <div class="leg-actions">
-        <button data-role="pick-start">Pick a different start</button>
-        <button data-role="use-current">Use my location</button>
+    <div id="sites" class="panel" aria-label="Sites">
+      <h2>Fly to site</h2>
+    </div>
+    <div id="directions-bar" class="panel" aria-label="Navigation" hidden>
+      <h2>Navigation</h2>
+      <label class="leg">
+        <span class="pin">A</span>
+        <input data-role="a" placeholder="Start: click the map or type lon, lat" autocomplete="off" spellcheck="false" aria-label="Start (A), lon, lat" />
+      </label>
+      <label class="leg">
+        <span class="pin">B</span>
+        <input data-role="b" placeholder="End: click the map or type lon, lat" autocomplete="off" spellcheck="false" aria-label="Destination (B), lon, lat" />
+      </label>
+      <div class="modes" role="group" aria-label="Travel by">
+        <button data-mode="walk" title="An astronaut on foot">On foot</button>
+        <button data-mode="rover" title="A robotic rover like Perseverance">Robotic rover</button>
+        <button data-mode="crewed" title="A crewed, pressurized rover (planned, not yet built)">Pressurized rover</button>
       </div>
-      <p class="leg"><span class="pin">B</span><span data-role="to"></span></p>
+      <div class="limits">
+        <label>Speed <input data-role="speed" type="number" min="0.01" step="any" /> km/h</label>
+        <label>Max slope <input data-role="max-slope" type="number" min="1" max="45" step="1" /> °</label>
+      </div>
+      <p class="hint" data-role="hint"></p>
     </div>
 
     <div id="route-card" class="panel" aria-label="Route" hidden>
@@ -60,7 +85,7 @@
       </header>
       <dl>
         <div><dt>Distance</dt><dd data-role="distance"></dd></div>
-        <div><dt>Walk time</dt><dd data-role="time"></dd></div>
+        <div><dt>Travel time</dt><dd data-role="time"></dd></div>
         <div><dt>Ascent</dt><dd data-role="ascent"></dd></div>
         <div>
           <dt>Max slope</dt>
@@ -72,16 +97,6 @@
       <p class="readout" data-role="readout"></p>
     </div>
 
-    <div id="photo-panel" class="panel" aria-label="Rover stop" hidden>
-      <header>
-        <h2 data-role="title"></h2>
-        <button data-role="close" aria-label="Close photo panel">×</button>
-      </header>
-      <p class="where" data-role="where"></p>
-      <button class="primary" data-role="street">Street view</button>
-      <div class="thumbs" data-role="thumbs"></div>
-      <p class="where" data-role="empty" hidden>No photos for this stop.</p>
-    </div>
     </div>
 
     <div id="ground-hud" class="panel" aria-label="Ground view" hidden>
@@ -103,7 +118,7 @@
       <figcaption></figcaption>
     </figure>
 
-    <div id="pov" tabindex="-1" aria-label="Street view" hidden>
+    <div id="pov" tabindex="-1" aria-label="Mars view" hidden>
       <div class="stage" data-role="stage"></div>
       <p class="pov-empty" data-role="empty" hidden>No photo in this direction. Drag to look around.</p>
       <div class="pov-bar panel">

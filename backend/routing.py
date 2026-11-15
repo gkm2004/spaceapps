@@ -1,4 +1,8 @@
-"""Least-cost walking routes on the grids produced by data/scripts/.
+"""Least-cost routes on the grids produced by data/scripts/.
+
+Walking is the default. A vehicle (a robotic or pressurized rover) is the same
+search with its own flat-ground speed and slope limit: slope still slows it the
+way it slows a walker, and cells steeper than its limit are impassable.
 
 `compute_route` is pure numpy/skimage (no files, no georeferencing) so it can
 be tested on synthetic grids. `Site` adds loading and lon/lat <-> cell maths.
@@ -17,12 +21,22 @@ from scipy.ndimage import distance_transform_edt
 from skimage.graph import route_through_array
 
 FLAT_SPEED_M_S = 0.8  # walking speed on flat ground; cost grid scales it down with slope
+WALK_MAX_SLOPE_DEG = 25.0  # baked into {site}_cost.npy by data/scripts/slope.py
+TOBLER_K = 3.5  # same slope penalty as data/scripts/slope.py
 PROFILE_STEP_M = 10.0
 SNAP_RADIUS_M = 30.0  # clicks on impassable cells snap to the nearest walkable one
 
 
 class RouteError(ValueError):
     """A route request that cannot be satisfied (bad point, no path)."""
+
+
+def cost_for_slope(slope_deg: np.ndarray, max_slope_deg: float) -> np.ndarray:
+    """Cost grid for a slope limit: the walking cost (data/scripts/slope.py), inf above the limit."""
+    with np.errstate(invalid="ignore", over="ignore"):
+        cost = np.exp(TOBLER_K * np.tan(np.radians(np.nan_to_num(slope_deg, nan=90.0))))
+        cost[~(slope_deg <= max_slope_deg)] = np.inf  # also catches NaN (no data)
+    return cost.astype(np.float32)
 
 
 @dataclass
@@ -36,11 +50,12 @@ class RouteResult:
     profile: list  # [[dist_m, height_m], ...] every PROFILE_STEP_M
 
 
-def compute_route(cost, slope, dem, cell_size, start, end) -> RouteResult:
+def compute_route(cost, slope, dem, cell_size, start, end, speed_m_s=FLAT_SPEED_M_S) -> RouteResult:
     """Least-cost path between two (row, col) cells.
 
     cost:  time multiplier per metre (1 = flat), np.inf = impassable
     slope: degrees;  dem: metres;  cell_size: (dx, dy) metres
+    speed_m_s: flat-ground speed, only used for est_minutes
     """
     start, end = tuple(map(int, start)), tuple(map(int, end))
     if start == end:
@@ -65,7 +80,7 @@ def compute_route(cost, slope, dem, cell_size, start, end) -> RouteResult:
 
     # Time: each step at the mean cost of its two cells.
     c = cost[rows, cols].astype(np.float64)
-    seconds = float(np.sum(seg * (c[:-1] + c[1:]) / 2.0) / FLAT_SPEED_M_S)
+    seconds = float(np.sum(seg * (c[:-1] + c[1:]) / 2.0) / speed_m_s)
 
     # Profile every 10 m (plus the exact end). Ascent is summed on this profile,
     # not per 2 m cell, so DEM noise doesn't inflate it.
@@ -89,7 +104,8 @@ def compute_route(cost, slope, dem, cell_size, start, end) -> RouteResult:
 MIN_WINDOW_MARGIN_CELLS = 150  # 300 m at 2 m cells
 
 
-def compute_route_windowed(cost, slope, dem, cell_size, start, end) -> RouteResult:
+def compute_route_windowed(cost, slope, dem, cell_size, start, end,
+                           speed_m_s=FLAT_SPEED_M_S, max_slope_deg=None) -> RouteResult:
     """compute_route, but searching only a box around the two points.
 
     The search cost grows with the number of cells, so on a large site a
@@ -97,6 +113,9 @@ def compute_route_windowed(cost, slope, dem, cell_size, start, end) -> RouteResu
     plus a margin of half its longer side (at least 300 m). If no route fits
     inside it, the margin is widened, ending with the whole grid, so a route
     that needs a long detour is still found.
+
+    max_slope_deg: None uses `cost` as given (walking). Otherwise the cost is
+    rebuilt from `slope` for that limit, inside the box only, so it stays cheap.
     """
     rows, cols = cost.shape
     span = max(abs(start[0] - end[0]), abs(start[1] - end[1]))
@@ -106,9 +125,11 @@ def compute_route_windowed(cost, slope, dem, cell_size, start, end) -> RouteResu
         c0, c1 = max(0, min(start[1], end[1]) - margin), min(cols, max(start[1], end[1]) + margin + 1)
         whole = (r0, c0, r1, c1) == (0, 0, rows, cols)
         try:
+            slope_w = slope[r0:r1, c0:c1]
+            cost_w = cost[r0:r1, c0:c1] if max_slope_deg is None else cost_for_slope(slope_w, max_slope_deg)
             result = compute_route(
-                cost[r0:r1, c0:c1], slope[r0:r1, c0:c1], dem[r0:r1, c0:c1], cell_size,
-                (start[0] - r0, start[1] - c0), (end[0] - r0, end[1] - c0))
+                cost_w, slope_w, dem[r0:r1, c0:c1], cell_size,
+                (start[0] - r0, start[1] - c0), (end[0] - r0, end[1] - c0), speed_m_s)
         except RouteError as exc:
             if whole or "No walkable route" not in str(exc):
                 raise
@@ -183,23 +204,38 @@ class Site:
         lat = np.degrees(np.arctan(self._k * np.tan(np.radians(lat_g))))
         return (np.asarray(lon) + 180.0) % 360.0 - 180.0, lat
 
-    def snap(self, cell):
-        """Nearest passable cell, if within SNAP_RADIUS_M."""
+    def snap(self, cell, max_slope_deg=None):
+        """Nearest passable cell, if within SNAP_RADIUS_M. Snaps to walkable (<= 25 deg) ground."""
         if np.isfinite(self.cost[cell]):
             return cell
+        if max_slope_deg is not None and self.slope[cell] <= max_slope_deg:
+            return cell  # too steep to walk, fine for this vehicle
         if self._snap_dist[cell] > SNAP_RADIUS_M:
             raise RouteError("Point is on impassable terrain (too steep) with no walkable ground nearby.")
         return int(self._snap_idx[0][cell]), int(self._snap_idx[1][cell])
 
     # -- routing -------------------------------------------------------------
-    def _route_cells(self, start, end) -> RouteResult:
-        return compute_route_windowed(self.cost, self.slope, self.dem, self.cell_size, start, end)
+    def _route_cells(self, start, end, speed_m_s, max_slope_deg) -> RouteResult:
+        return compute_route_windowed(self.cost, self.slope, self.dem, self.cell_size, start, end,
+                                      speed_m_s, max_slope_deg)
 
-    def route(self, start_lonlat, end_lonlat) -> dict:
-        """GeoJSON Feature per CONTRACT.md. Cached per (start cell, end cell)."""
-        start = self.snap(self.lonlat_to_cell(*start_lonlat))
-        end = self.snap(self.lonlat_to_cell(*end_lonlat))
-        r = self.route_cells(start, end)
+    def route(self, start_lonlat, end_lonlat, speed_m_s=None, max_slope_deg=None) -> dict:
+        """GeoJSON Feature per CONTRACT.md. Cached per (start cell, end cell, speed, slope limit).
+
+        speed_m_s / max_slope_deg: None = walking (FLAT_SPEED_M_S, WALK_MAX_SLOPE_DEG).
+        """
+        speed = FLAT_SPEED_M_S if speed_m_s is None else float(speed_m_s)
+        limit = None if max_slope_deg is None or max_slope_deg == WALK_MAX_SLOPE_DEG else float(max_slope_deg)
+        start = self.snap(self.lonlat_to_cell(*start_lonlat), limit)
+        end = self.snap(self.lonlat_to_cell(*end_lonlat), limit)
+        try:
+            r = self.route_cells(start, end, speed, limit)
+        except RouteError as exc:
+            if limit is not None and "impassable" in str(exc):
+                raise RouteError(f"{exc} It is steeper than {limit:g} degrees.") from exc
+            if limit is not None and "No walkable route" in str(exc):
+                raise RouteError(f"No route with slopes under {limit:g} degrees between these points.") from exc
+            raise
         lon, lat = self.cells_to_lonlat(r.cells[:, 0], r.cells[:, 1])
         coords = [[round(float(a), 7), round(float(b), 7), round(float(c), 2)]
                   for a, b, c in zip(lon, lat, r.heights)]

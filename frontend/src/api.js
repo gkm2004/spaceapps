@@ -32,11 +32,16 @@ export function getSites() {
   return USE_MOCK ? mock('sites') : get('/api/sites');
 }
 
-/** start/end are [lon, lat]. -> GeoJSON Feature (LineString of [lon, lat, height]) */
-export function getRoute(site, start, end) {
-  return USE_MOCK
-    ? mock('route')
-    : get('/api/route', { site, start: lonLat(start), end: lonLat(end) });
+/**
+ * start/end are [lon, lat]; opts { speed (m/s), maxSlope (degrees) } for vehicles, omitted = walking.
+ * -> GeoJSON Feature (LineString of [lon, lat, height])
+ */
+export function getRoute(site, start, end, opts = {}) {
+  if (USE_MOCK) return mock('route');
+  const params = { site, start: lonLat(start), end: lonLat(end) };
+  if (opts.speed) params.speed = opts.speed;
+  if (opts.maxSlope) params.max_slope = opts.maxSlope;
+  return get('/api/route', params);
 }
 
 /** -> GeoJSON FeatureCollection of Points; properties { sol, images, pov } (see CONTRACT.md) */

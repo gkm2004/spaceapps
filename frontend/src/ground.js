@@ -19,6 +19,14 @@ const MOVE_KEYS = {
   KeyA: [0, -1], ArrowLeft: [0, -1],
 };
 
+/** Initial bearing from one lon/lat (degrees) to another, clockwise from north, in degrees. */
+function bearingDeg(lon1, lat1, lon2, lat2) {
+  const [l1, p1, l2, p2] = [lon1, lat1, lon2, lat2].map(Cesium.Math.toRadians);
+  const y = Math.sin(l2 - l1) * Math.cos(p2);
+  const x = Math.cos(p1) * Math.sin(p2) - Math.sin(p1) * Math.cos(p2) * Math.cos(l2 - l1);
+  return (Cesium.Math.toDegrees(Math.atan2(y, x)) + 360) % 360;
+}
+
 const inBbox = (site, lonDeg, latDeg) =>
   lonDeg >= site.bbox[0] && lonDeg <= site.bbox[2] && latDeg >= site.bbox[1] && latDeg <= site.bbox[3];
 
@@ -207,7 +215,7 @@ class Minimap {
  * @param viewer Cesium viewer
  * @param sites entries from /api/sites
  * @param ui { hud, minimapCanvas, exitButton, onModeChange(isGround) }
- * @returns { isActive(), leave(), exitToOrbit(), position() }
+ * @returns { isActive(), leave(), exitToOrbit(), enterAt(), position() }
  */
 export function initGroundMode(viewer, sites, ui) {
   const { scene, camera } = viewer;
@@ -322,7 +330,7 @@ export function initGroundMode(viewer, sites, ui) {
     if (forward || right || glided || pose.ground !== before) applyCamera();
   }
 
-  function start(targetSite, lonRad, latRad, groundHeight) {
+  function start(targetSite, lonRad, latRad, groundHeight, heading = camera.heading) {
     site = targetSite;
     setMode('entering');
     controller.enableInputs = false;
@@ -331,7 +339,7 @@ export function initGroundMode(viewer, sites, ui) {
       lon: lonRad,
       lat: latRad,
       ground: groundHeight,
-      heading: camera.heading,
+      heading,
       pitch: 0,
     });
     camera.flyTo({
@@ -436,7 +444,29 @@ export function initGroundMode(viewer, sites, ui) {
         ms: Cesium.Math.clamp(metres * 12, 800, 5000),
       };
     },
-    /** Jump to a point and heading (degrees), e.g. after moving between stops in street view. */
+    /**
+     * Go down to a point (degrees) inside `targetSite`, optionally facing `toward` ([lon, lat]).
+     * From orbit this is the usual descent; already on the ground at that site it is a jump.
+     */
+    async enterAt(targetSite, lonDeg, latDeg, toward = null) {
+      const heading = toward ? bearingDeg(lonDeg, latDeg, toward[0], toward[1]) : undefined;
+      if (mode === 'ground' && site === targetSite) {
+        this.setPose(lonDeg, latDeg, heading);
+        return;
+      }
+      leave(); // no-op from orbit; abandons a descent still in progress or another site
+      const carto = Cesium.Cartographic.fromDegrees(lonDeg, latDeg);
+      try {
+        await sampleTerrain(scene, [carto]);
+      } catch (err) {
+        console.warn('Could not sample the terrain at the start point', err);
+      }
+      // Unknown height: aim at the current camera height's ground, tick() clamps on arrival
+      const h = Number.isFinite(carto.height) ? carto.height : (scene.sampleHeight(carto) ?? 0);
+      start(targetSite, carto.longitude, carto.latitude, h,
+        Number.isFinite(heading) ? Cesium.Math.toRadians(heading) : camera.heading);
+    },
+    /** Jump to a point and heading (degrees), e.g. after moving between stops in Mars view. */
     setPose(lonDeg, latDeg, headingDeg) {
       if (mode !== 'ground') return;
       glide = null;

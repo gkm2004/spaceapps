@@ -1,5 +1,5 @@
 // Rover waypoints: markers on the globe, a photo panel per stop, and the
-// street-view viewer (pov.js) for stops that have direction-tagged photos.
+// Mars view viewer (pov.js) for stops that have direction-tagged photos.
 import * as Cesium from 'cesium';
 import { getWaypoints } from './api.js';
 import { placeOnGround } from './heights.js';
@@ -17,7 +17,7 @@ const SELECTED = Cesium.Color.fromCssColorString('#ffd24a');
 /**
  * @param viewer Cesium viewer
  * @param sites entries from /api/sites
- * @param ui { panel, lightbox, pov, isBlocked(), beforeStreetView(), error(msg) }
+ * @param ui { panel, lightbox, pov, isBlocked(), beforeMarsView(), error(msg) }
  * @returns { hitTest(windowPosition) } so other click handlers can stand down
  */
 export function initWaypoints(viewer, sites, ui) {
@@ -27,7 +27,7 @@ export function initWaypoints(viewer, sites, ui) {
   let stops = []; // all stops, travel order
   let selected = null;
   let groundMode = false;
-  let afterStreetView = null; // set when street view was entered from ground mode
+  let afterMarsView = null; // set when Mars view was entered from ground mode
   const baseSize = () => (groundMode ? 10 : 7);
 
   function select(stop) {
@@ -55,9 +55,9 @@ export function initWaypoints(viewer, sites, ui) {
     onStop: (stop) => showPanel(stop), // keep panel + marker in step while moving between stops
     onClose: (stop, heading) => {
       if (!stop) return;
-      if (afterStreetView) afterStreetView(stop, heading); // back on the ground, at this stop
+      if (afterMarsView) afterMarsView(stop, heading); // back on the ground, at this stop
       else flyAbove(stop, 0); // the globe is where you were standing
-      afterStreetView = null;
+      afterMarsView = null;
     },
   });
 
@@ -66,9 +66,9 @@ export function initWaypoints(viewer, sites, ui) {
     select(stop);
     el('title').textContent = `${stop.rover} · Sol ${stop.sol}`;
     el('where').textContent = `Lon ${stop.lon.toFixed(4)}°  Lat ${stop.lat.toFixed(4)}°`;
-    const street = el('street');
-    street.disabled = stop.pov.length === 0;
-    street.textContent = stop.pov.length ? 'Street view' : 'No street view at this stop';
+    const marsView = el('mars-view');
+    marsView.disabled = stop.pov.length === 0;
+    marsView.textContent = stop.pov.length ? 'Mars view' : 'No Mars view at this stop';
     el('thumbs').replaceChildren(...stop.images.map((image) => {
       const button = document.createElement('button');
       button.title = `${image.camera}: click to enlarge`;
@@ -91,19 +91,19 @@ export function initWaypoints(viewer, sites, ui) {
 
   el('close').addEventListener('click', closePanel);
   /** @param opts { heading?: degrees, onClose?(stop, heading) } */
-  function openStreetView(stop, opts = {}) {
-    // street view walks along one rover's path: only stops from the same site
+  function openMarsView(stop, opts = {}) {
+    // Mars view walks along one rover's path: only stops from the same site
     const withPov = stops.filter((s) => s.site === stop.site && s.pov.length > 0);
     const i = withPov.indexOf(stop);
     if (i < 0) return;
-    afterStreetView = opts.onClose ?? null;
+    afterMarsView = opts.onClose ?? null;
     pov.open(withPov, i, { heading: opts.heading });
   }
-  el('street').addEventListener('click', () => {
-    if (selected) openStreetView(selected, ui.streetViewOptions?.() ?? {});
+  el('mars-view').addEventListener('click', () => {
+    if (selected) openMarsView(selected, ui.marsViewOptions?.() ?? {});
   });
 
-  /** Closest stop that has street-view photos: { stop, distance (m), bearing (deg from north) } or null. */
+  /** Closest stop that has Mars view photos: { stop, distance (m), bearing (deg from north) } or null. */
   function nearest(lon, lat) {
     const radius = Cesium.Ellipsoid.MARS.maximumRadius;
     const cosLat = Math.cos(Cesium.Math.toRadians(lat));
@@ -230,9 +230,9 @@ export function initWaypoints(viewer, sites, ui) {
 
   return {
     hitTest,
-    isStreetViewOpen: pov.isOpen,
+    isMarsViewOpen: pov.isOpen,
     nearest,
-    openStreetView,
+    openMarsView,
     setGroundMode,
     /** Call when heightmaps arrive: markers switch from terrain clamping to exact heights. */
     refreshHeights() {
