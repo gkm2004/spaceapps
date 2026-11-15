@@ -6,3 +6,5 @@ data/raw/
 data/processed/
 *.tif
 *.npy
+data/terrain/
+data/tiles/*/

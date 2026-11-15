@@ -4,3 +4,5 @@ numpy
 rasterio
 pyproj
 scikit-image
+scipy
+pytest

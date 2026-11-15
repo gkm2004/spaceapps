@@ -1,5 +1,6 @@
 import * as Cesium from 'cesium';
 import { CESIUM_ION_TOKEN, CESIUM_MARS_ASSET_ID } from './config.js';
+import { surfaceHeightAt } from './heights.js';
 
 /**
  * Create the Mars viewer and start loading the Cesium Mars tileset.
@@ -58,8 +59,43 @@ export function createGlobe(container) {
   return { viewer, tilesetReady };
 }
 
+const siteGroundHeights = new Map(); // site id -> Cesium terrain height at the site centre
+
+/**
+ * Terrain height at a site's centre, sampled at full detail (a quick sample from
+ * orbit hits coarse tiles and can be kilometres off). Cached; 0 if it can't be found.
+ */
+async function siteGroundHeight(viewer, site) {
+  if (siteGroundHeights.has(site.id)) return siteGroundHeights.get(site.id);
+  const exact = surfaceHeightAt(site.center[0], site.center[1], { evenIfHidden: true });
+  if (Number.isFinite(exact)) return exact;
+  const { scene } = viewer;
+  const carto = Cesium.Cartographic.fromDegrees(site.center[0], site.center[1]);
+  let done = false;
+  const pump = () => {
+    // sampling only progresses while frames render (requestRenderMode)
+    if (done) return;
+    scene.requestRender();
+    requestAnimationFrame(pump);
+  };
+  pump();
+  try {
+    await Promise.race([
+      scene.sampleHeightMostDetailed([carto]),
+      new Promise((resolve) => setTimeout(resolve, 2500)), // don't hold the flight up for long
+    ]);
+  } catch {
+    // fall through to 0
+  } finally {
+    done = true;
+  }
+  if (!Number.isFinite(carto.height)) return 0;
+  siteGroundHeights.set(site.id, carto.height);
+  return carto.height;
+}
+
 /** Fly to a site from /api/sites, looking down at its bbox at an angle. */
-export function flyToSite(viewer, site, duration = 3) {
+export async function flyToSite(viewer, site, duration = 3) {
   const [west, south, east, north] = site.bbox;
   const [lon, lat] = site.center;
   const rect = Cesium.Rectangle.fromDegrees(west, south, east, north);
@@ -67,11 +103,14 @@ export function flyToSite(viewer, site, duration = 3) {
   const r = Cesium.Ellipsoid.MARS.maximumRadius;
   const span = Math.max(rect.width * Math.cos(rect.north) * r, rect.height * r);
 
+  // Aim at the ground, not the ellipsoid: Jezero's floor is ~2.6 km below it, and
+  // aiming at height 0 leaves the site in the lower part of the screen.
+  const height = await siteGroundHeight(viewer, site);
   viewer.camera.flyToBoundingSphere(
-    new Cesium.BoundingSphere(Cesium.Cartesian3.fromDegrees(lon, lat), span / 2),
+    new Cesium.BoundingSphere(Cesium.Cartesian3.fromDegrees(lon, lat, height), span / 2),
     {
       duration,
-      offset: new Cesium.HeadingPitchRange(0, Cesium.Math.toRadians(-50), span * 1.1),
+      offset: new Cesium.HeadingPitchRange(0, Cesium.Math.toRadians(-50), span * 1.7),
     },
   );
 }

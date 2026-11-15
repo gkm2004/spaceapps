@@ -45,6 +45,11 @@ cd backend && pip install -r requirements.txt && uvicorn main:app --reload
 For now, the backend returns the files in `frontend/mock/` from every
 endpoint, so the frontend can call a running server from day one.
 
+## Deploying
+
+See [deploy/README.md](deploy/README.md): Cloudflare Pages for the frontend, a small VPS
+with `docker compose` (API + Caddy HTTPS) for the backend and data.
+
 ## Team rules
 
 - **Track A only edits `frontend/`.**
