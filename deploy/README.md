@@ -99,6 +99,23 @@ of RAM per replica (routing grids are held in memory); routing is CPU-bound.
   `VITE_API_BASE`).
 - Put it behind the platform's HTTPS ingress and drop Caddy.
 
+### Azure setup used (Container Apps + Static Web Apps)
+
+- `Dockerfile.azure` bakes `data/{processed,waypoints,tiles,terrain}` into the
+  image in many small layers, so a registry push can resume on a flaky
+  connection. Stage a context holding `backend/` (no `.venv`), `frontend/mock/`
+  and those four data folders, with `Dockerfile.azure` as `Dockerfile`, then
+  `docker build` and `docker push` to ACR (`az acr build` may be blocked on new
+  subscriptions).
+- Container App: 1 vCPU / 2 GiB, port 8000, external ingress, min replicas 1,
+  `ALLOWED_ORIGINS` set to the Static Web Apps URL, ACR pulled with a system
+  identity.
+- Frontend: `npm run build` with `VITE_API_BASE`, `VITE_USE_MOCK=false` and
+  `VITE_CESIUM_ION_TOKEN` set, then
+  `npx @azure/static-web-apps-cli deploy frontend/dist --deployment-token <token>`.
+- Update the API: build and push a new tag, then
+  `az containerapp update -n marsmap-api -g rg-marsmap --image <acr>/marsmap-api:<tag>`.
+
 ## Cost notes
 
 Hetzner CX22 is about 4 to 5 EUR/mo with ~20 TB traffic included, which covers the
